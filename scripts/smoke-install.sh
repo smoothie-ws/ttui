@@ -274,6 +274,9 @@ disabled = submit("/mfa", get("/settings"), operation="disable", current_passwor
 assert "Set up authenticator" in disabled
 assert "Audit: authenticator enabled" in get("/logs?source=panel&q=Audit%3A")
 PY
+if [[ -n ${TTUI_BROWSER_PYTHON:-} ]]; then
+    "$TTUI_BROWSER_PYTHON" scripts/smoke-browser.py "$work/install.log"
+fi
 sudo -u ttui sed -i -E 's/("next": )"[^"]+"/\1"2000-01-01T00:00:00+00:00"/' /var/lib/ttui/backup-schedule.json
 sudo systemctl start ttui-backups.service
 sudo grep -Fq -- '-auto.zip' /var/lib/ttui/backup-schedule.json

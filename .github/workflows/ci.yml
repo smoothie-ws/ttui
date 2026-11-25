@@ -41,8 +41,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Install browser test dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ttui-browser"
+          "$RUNNER_TEMP/ttui-browser/bin/pip" install playwright==1.65.1
+          "$RUNNER_TEMP/ttui-browser/bin/python" -m playwright install --with-deps chromium
       - run: bash scripts/package.sh
       - run: bash scripts/smoke-install.sh
+        env:
+          TTUI_BROWSER_PYTHON: ${{ runner.temp }}/ttui-browser/bin/python
   upgrade-from-stable:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
