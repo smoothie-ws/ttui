@@ -6,7 +6,7 @@ const editor = find("routing-editor");
 const error = find("routing-error");
 const customProtocols = {
   socks: "SOCKS5", http: "HTTP", trusttunnel: "TrustTunnel", freedom: "Freedom",
-  blackhole: "Блокировка", xray: "Другой протокол Xray"
+  blackhole: "Blackhole", xray: "Other Xray protocol"
 };
 let spec;
 let fieldReaders = [];
@@ -18,13 +18,19 @@ function node(tag, text, className) {
   return element;
 }
 
+function edit(element, handler) {
+  element.onclick = () => {
+    if (!collect()) return;
+    handler();
+    redraw();
+  };
+  return element;
+}
+
 function button(text, handler) {
   const element = node("button", text);
   element.type = "button";
-  element.addEventListener("click", () => {
-    if (collect()) handler();
-  });
-  return element;
+  return edit(element, handler);
 }
 
 function field(container, title, element) {
@@ -52,7 +58,7 @@ function options(select, choices, current) {
   select.replaceChildren();
   for (const [value, label] of Object.entries(choices)) select.add(new Option(label, value));
   if (current !== undefined && !Object.hasOwn(choices, current)) {
-    select.add(new Option(current || "Выберите выход", current));
+    select.add(new Option(current || "Select an outbound", current));
   }
   select.value = current;
   return select;
@@ -90,36 +96,34 @@ function redraw() {
     const box = node("div", "", "editor-item stack");
     const top = node("div", "", "row");
     box.append(top);
-    const tag = input(top, "Имя выхода", outbound.tag, "proxy");
+    const tag = input(top, "Outbound name", outbound.tag, "proxy");
     const kind = Object.hasOwn(customProtocols, outbound.protocol) ? outbound.protocol : "xray";
-    const protocol = field(top, "Тип", options(node("select"), customProtocols, kind));
-    top.append(button("Удалить", () => {
-      spec.outbounds.splice(index, 1);
-      redraw();
-    }));
+    const protocol = field(top, "Type", options(node("select"), customProtocols, kind));
+    top.append(button("Delete", () => spec.outbounds.splice(index, 1)));
     let address, port, user, password, advanced;
     const server = outbound.settings?.servers?.[0];
     const proxy = ["socks", "http"].includes(kind);
+    const {tag: _tag, protocol: _protocol, ...extra} = outbound;
+    const emptyProxy = !Object.keys(extra).length;
     const simple = proxy && outbound.settings?.servers?.length === 1
-      && Object.keys(outbound).every((key) => ["tag", "protocol", "settings"].includes(key))
+      && Object.keys(extra).length === 1
       && Object.keys(outbound.settings).every((key) => key === "servers")
       && Object.keys(server ?? {}).every((key) => ["address", "port", "users"].includes(key))
       && (!server?.users || (server.users.length <= 1
         && Object.keys(server.users[0] ?? {}).every((key) => ["user", "pass"].includes(key))));
-    if (proxy && (simple || !outbound.settings)) {
+    if (proxy && (simple || emptyProxy)) {
       const grid = node("div", "", "grid");
       box.append(grid);
-      address = input(grid, "Адрес прокси", server?.address, "proxy.example.com");
-      port = input(grid, "Порт", server?.port, "1080");
+      address = input(grid, "Proxy address", server?.address, "proxy.example.com");
+      port = input(grid, "Port", server?.port, "1080");
       port.inputMode = "numeric";
-      user = input(grid, "Логин", server?.users?.[0]?.user);
-      password = input(grid, "Пароль", server?.users?.[0]?.pass);
+      user = input(grid, "Username", server?.users?.[0]?.user);
+      password = input(grid, "Password", server?.users?.[0]?.pass);
       password.type = "password";
     } else if (kind === "trusttunnel") {
-      advanced = input(box, "TOML удалённого endpoint", outbound.config, "Вставьте экспорт TOML из TrustTunnel", true);
+      advanced = input(box, "Remote endpoint TOML", outbound.config, "Paste the TrustTunnel TOML export", true);
     } else if (kind === "xray" || proxy || Object.keys(outbound).length > 2) {
-      const {tag: _tag, ...configuration} = outbound;
-      advanced = input(box, "Параметры выхода Xray (JSON)", JSON.stringify(configuration, null, 2), "", true);
+      advanced = input(box, "Xray outbound options (JSON)", JSON.stringify({protocol: _protocol, ...extra}, null, 2), "", true);
     }
     tag.addEventListener("change", () => {
       if (!collect()) return;
@@ -152,7 +156,7 @@ function redraw() {
       } else if (advanced) {
         const config = JSON.parse(advanced.value);
         if (!config || typeof config !== "object" || Array.isArray(config)) {
-          throw new Error("Параметры выхода Xray должны быть объектом JSON.");
+          throw new Error("Xray outbound options must be a JSON object.");
         }
         spec.outbounds[index] = {...config, tag: nextTag};
       } else {
@@ -169,24 +173,20 @@ function redraw() {
     const box = node("div", "", "editor-item stack");
     const top = node("div", "", "row");
     box.append(top);
-    const target = field(top, "Выход", options(node("select", "", "rule-target"), targets(), rule.outboundTag));
-    const port = input(top, "Порты назначения", rule.port, "80,443,1000-2000");
+    const target = field(top, "Outbound", options(node("select", "", "rule-target"), targets(), rule.outboundTag));
+    const port = input(top, "Destination ports", rule.port, "80,443,1000-2000");
     const actions = node("div", "", "actions");
     top.append(actions);
-    for (const [delta, label] of [[-1, "Выше"], [1, "Ниже"]]) {
+    for (const [delta, label] of [[-1, "Move up"], [1, "Move down"]]) {
       const move = button(label, () => {
         [spec.rules[index], spec.rules[index + delta]] = [spec.rules[index + delta], spec.rules[index]];
-        redraw();
       });
       move.disabled = index + delta < 0 || index + delta >= spec.rules.length;
       actions.append(move);
     }
-    actions.append(button("Удалить", () => {
-      spec.rules.splice(index, 1);
-      redraw();
-    }));
-    const domains = input(box, "Домены, по одному на строку", rule.domain?.join("\n"), "regexp:^.*\\.example\\.org$", true);
-    const ips = input(box, "IP и CIDR, по одному на строку", rule.ip?.join("\n"), "geoip:private", true);
+    actions.append(button("Delete", () => spec.rules.splice(index, 1)));
+    const domains = input(box, "Domains, one per line", rule.domain?.join("\n"), "regexp:^.*\\.example\\.org$", true);
+    const ips = input(box, "IP addresses and CIDR ranges, one per line", rule.ip?.join("\n"), "geoip:private", true);
     domains.rows = ips.rows = 2;
     fieldReaders.push(() => {
       const updated = {...rule, outboundTag: target.value};
@@ -208,7 +208,7 @@ function load() {
   try {
     const data = JSON.parse(source.value);
     if (!data || !Array.isArray(data.rules) || !Array.isArray(data.outbounds)) {
-      throw new Error("Укажите массивы outbounds и rules.");
+      throw new Error("Provide outbounds and rules arrays.");
     }
     spec = data;
     redraw();
@@ -217,6 +217,7 @@ function load() {
     error.hidden = true;
     return true;
   } catch (problem) {
+    editor.inert = true;
     error.textContent = problem.message;
     error.hidden = false;
     return false;
@@ -226,19 +227,11 @@ function load() {
 for (const id of ["routing-enabled", "routing-default", "routing-strategy"]) {
   find(id).addEventListener("change", collect);
 }
-find("add-outbound").addEventListener("click", () => {
-  if (!collect()) return;
-  spec.outbounds.push({tag: "", protocol: "socks"});
-  redraw();
-});
-find("add-rule").addEventListener("click", () => {
-  if (!collect()) return;
-  spec.rules.push({outboundTag: spec.default});
-  redraw();
-});
+edit(find("add-outbound"), () => spec.outbounds.push({tag: "", protocol: "socks"}));
+edit(find("add-rule"), () => spec.rules.push({outboundTag: spec.default}));
 source.addEventListener("input", () => {
   editor.inert = true;
-  error.textContent = "JSON изменён. Загрузите его в редактор, чтобы продолжить работу с формой.";
+  error.textContent = "The JSON has changed. Load it into the editor to continue using the form.";
   error.hidden = false;
 });
 find("load-spec").hidden = false;

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Сервер{% endblock %}
+{% block title %}Server{% endblock %}
 {% block content %}
-<div class="page-title"><div><h1>Сервер</h1><p class="subtle">TLS-домены и конфигурация TrustTunnel Endpoint.</p></div></div>
+{{ heading('Server', 'TLS hosts and TrustTunnel Endpoint configuration.') }}
 <section class="card stack">
-  <h2>Домены</h2>
+  <h2>Domains</h2>
   <div class="host-list">
     {% for key, label in host_types.items() %}
       {% for host in hosts.get(key, []) if host is mapping %}
@@ -12,52 +12,52 @@
     {% endfor %}
   </div>
   <details>
-    <summary>Добавить TLS-хост</summary>
+    <summary>Add TLS host</summary>
     <form class="details-body stack" method="post" action="{{ url_for('add_host') }}">
       {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
       <div class="grid">
-        <label>Домен <input name="hostname" required placeholder="vpn.example.com"></label>
-        <label>Назначение <select name="group">{% for key, label in host_types.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>
-        <label>Цепочка сертификатов <input name="cert_chain_path" required placeholder="certs/fullchain.pem"></label>
-        <label>Закрытый ключ <input name="private_key_path" required placeholder="certs/privkey.pem"></label>
+        <label>Domain <input name="hostname" required placeholder="vpn.example.com"></label>
+        <label>Purpose <select name="group">{% for key, label in host_types.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>
+        <label>Certificate chain <input name="cert_chain_path" required placeholder="certs/fullchain.pem"></label>
+        <label>Private key <input name="private_key_path" required placeholder="certs/privkey.pem"></label>
       </div>
-      <p class="subtle">Укажите файлы, доступные службе TrustTunnel. Для изменения и удаления хоста отредактируйте hosts.toml.</p>
-      <div><button class="primary">Добавить домен</button></div>
+      <p class="subtle">Choose files the TrustTunnel service can read. Edit hosts.toml to change or remove a host.</p>
+      <div><button class="primary">Add domain</button></div>
     </form>
   </details>
 </section>
 <section class="card">
-  <h2>Конфигурация TOML</h2>
+  <h2>TOML configuration</h2>
   {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
-  {% if routed %}<p class="subtle">Пока маршрутизация включена, панель держит forward_protocol направленным на локальный Xray.</p>{% endif %}
-  <form class="stack" method="post" action="{{ url_for('save_server') }}" data-confirm="Применить конфигурацию и перезапустить TrustTunnel?">
+  {% if routed %}<p class="subtle">While routing is enabled, the panel points forward_protocol at the local Xray instance.</p>{% endif %}
+  <form class="stack" method="post" action="{{ url_for('save_server') }}" data-confirm="Apply the configuration and restart TrustTunnel?">
     {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
-    {% for key, label in [('vpn','Параметры endpoint'),('hosts','TLS-хосты'),('credentials','Клиенты'),('rules','Фильтры подключений')] %}
+    {% for key, label in [('vpn','Endpoint settings'),('hosts','TLS hosts'),('credentials','Clients'),('rules','Connection filters')] %}
     <details {% if key == 'vpn' %}open{% endif %}>
       <summary>{{ key }}.toml <span class="subtle">{{ label }}</span></summary>
       <div class="details-body"><textarea class="code" aria-label="{{ key }}.toml" name="{{ key }}" rows="14" spellcheck="false">{{ source[key] }}</textarea></div>
     </details>
     {% endfor %}
-    <div><button class="primary">Сохранить и перезапустить</button></div>
+    <div><button class="primary">Save and restart</button></div>
   </form>
 </section>
 <details class="card">
-  <summary>Параметры запуска</summary>
-  <form class="details-body stack" method="post" action="{{ url_for('save_launch') }}" data-confirm="Применить параметры и перезапустить TrustTunnel?">
+  <summary>Startup options</summary>
+  <form class="details-body stack" method="post" action="{{ url_for('save_launch') }}" data-confirm="Apply the startup options and restart TrustTunnel?">
     {{ token() }}
     <div class="grid">
-      <label>Уровень логов
+      <label>Log level
         <select name="loglvl">
           {% for option in ['info','debug','trace'] %}
           <option {% if launch.get('loglvl', 'info') == option %}selected{% endif %}>{{ option }}</option>
           {% endfor %}
         </select>
       </label>
-      <label>Число потоков <input name="jobs" value="{{ launch.get('jobs', '') }}" type="number" min="1" max="9999" placeholder="Автоматически"></label>
-      <label>Файл логов <input name="logfile" value="{{ launch.get('logfile', '') }}" placeholder="По умолчанию systemd journal"></label>
+      <label>Thread count <input name="jobs" value="{{ launch.get('jobs', '') }}" type="number" min="1" max="9999" placeholder="Automatic"></label>
+      <label>Log file <input name="logfile" value="{{ launch.get('logfile', '') }}" placeholder="Defaults to the systemd journal"></label>
       <label>Sentry DSN <input name="sentry_dsn" value="{{ launch.get('sentry_dsn', '') }}" spellcheck="false"></label>
     </div>
-    <div><button class="primary">Сохранить параметры запуска</button></div>
+    <div><button class="primary">Save startup options</button></div>
   </form>
 </details>
 {% endblock %}

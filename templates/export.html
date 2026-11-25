@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Экспорт подключения{% endblock %}
+{% block title %}Connection export{% endblock %}
 {% block content %}
-<div class="page-title"><div><h1>Подключение {{ username }}</h1><p class="subtle">Содержит пароль клиента. Передайте данные по защищённому каналу.</p></div></div>
+{{ heading('Connection for ' ~ username, 'This contains the client password. Share it through a secure channel.') }}
 <section class="card stack">
-  <label>{{ 'Конфигурация TOML' if fmt == 'toml' else 'Ссылка tt://' }}
+  <label>{{ 'TOML configuration' if fmt == 'toml' else 'tt:// link' }}
     <textarea id="export-value" class="code" rows="{{ 14 if fmt == 'toml' else 4 }}" readonly spellcheck="false">{{ content }}</textarea>
   </label>
   <div class="actions">
-    <button class="primary" type="button" data-copy="export-value">Копировать</button>
-    <button type="button" data-download="export-value" data-filename="{{ 'endpoint.toml' if fmt == 'toml' else 'trusttunnel.txt' }}">Скачать</button>
-    <a class="button" href="{{ url_for('index') }}">К клиентам</a>
+    <button class="primary" type="button" data-copy="export-value">Copy</button>
+    <button type="button" data-download="export-value" data-filename="{{ 'endpoint.toml' if fmt == 'toml' else 'trusttunnel.txt' }}">Download</button>
+    <a class="button" href="{{ url_for('index') }}">Back to clients</a>
   </div>
 </section>
 {% endblock %}

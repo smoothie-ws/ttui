@@ -12,11 +12,11 @@ document.addEventListener("click", async (event) => {
   if (button.dataset.copy) {
     try {
       await navigator.clipboard.writeText(field.value);
-      button.textContent = "Скопировано";
+      button.textContent = "Copied";
     } catch {
       field.focus();
       field.select();
-      button.textContent = "Данные выделены";
+      button.textContent = "Text selected";
     }
     return;
   }

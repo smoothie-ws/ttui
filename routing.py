@@ -2,9 +2,11 @@
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -18,39 +20,39 @@ DEFAULT_ROUTING = {"enabled": False, "domainStrategy": "IPIfNonMatch",
 
 def compile_routing(spec):
     if not isinstance(spec, dict) or type(spec.get("enabled")) is not bool:
-        raise ValueError("Укажите enabled в настройках маршрутизации.")
+        raise ValueError("Set enabled to true or false in the routing configuration.")
     strategy = spec.get("domainStrategy")
     if strategy not in ("AsIs", "IPIfNonMatch", "IPOnDemand"):
-        raise ValueError("Неизвестная стратегия DNS.")
+        raise ValueError("Unknown DNS strategy.")
     if not all(isinstance(spec.get(key), list) for key in ("outbounds", "rules")):
-        raise ValueError("Выходы и правила должны быть списками.")
+        raise ValueError("Outbounds and rules must be arrays.")
 
     outbounds = {"direct": {"tag": "direct", "protocol": "freedom"},
                  "block": {"tag": "block", "protocol": "blackhole"}}
     cascades = {}
     for outbound in spec["outbounds"]:
         if not isinstance(outbound, dict):
-            raise ValueError("Выход должен быть объектом.")
+            raise ValueError("Each outbound must be an object.")
         tag, protocol = outbound.get("tag"), outbound.get("protocol")
         if not isinstance(tag, str) or not re.fullmatch(r"[\w.-]{1,64}", tag, re.ASCII) or tag in outbounds:
-            raise ValueError("Имена выходов должны быть уникальны (A–Z, 0–9, _, ., -).")
+            raise ValueError("Outbound names must be unique (A–Z, 0–9, _, ., -).")
         if protocol == "trusttunnel":
             if len(cascades) >= 32:
-                raise ValueError("Допускается не более 32 каскадов.")
+                raise ValueError("Up to 32 cascades are supported.")
             raw = outbound.get("config")
             if not isinstance(raw, str):
-                raise ValueError(f"{tag}: требуется конфигурация TrustTunnel в TOML.")
+                raise ValueError(f"{tag}: a TrustTunnel TOML configuration is required.")
             client = tomlkit.parse(raw)
             # An endpoint export and a full CLI configuration use different shapes.
             if "endpoint" not in client:
                 client = tomlkit.document().append("endpoint", client)
             endpoint = client["endpoint"]
             if not isinstance(endpoint, dict):
-                raise ValueError(f"{tag}: требуется таблица endpoint.")
+                raise ValueError(f"{tag}: an endpoint table is required.")
             if not all(
                 endpoint.get(key) for key in ("hostname", "addresses", "username", "password")
             ):
-                raise ValueError(f"{tag}: заполните hostname, addresses, username и password.")
+                raise ValueError(f"{tag}: provide hostname, addresses, username, and password.")
             if endpoint.get("client_random_prefix") and not endpoint.get("client_random"):
                 endpoint["client_random"] = endpoint["client_random_prefix"]
             endpoint.pop("client_random_prefix", None)
@@ -66,19 +68,19 @@ def compile_routing(spec):
                 "servers": [{"address": "127.0.0.1", "port": port}]}}
         else:
             if not isinstance(protocol, str) or not re.fullmatch(r"[a-z0-9_-]+", protocol):
-                raise ValueError(f"{tag}: укажите протокол Xray.")
+                raise ValueError(f"{tag}: specify an Xray protocol.")
             outbounds[tag] = outbound
 
     default = spec.get("default")
     if not isinstance(default, str) or default not in outbounds:
-        raise ValueError("Выберите существующий выход по умолчанию.")
+        raise ValueError("Select an existing default outbound.")
     rules = []
     for rule in spec["rules"]:
         if (not isinstance(rule, dict) or not isinstance(rule.get("outboundTag"), str)
                 or rule["outboundTag"] not in outbounds):
-            raise ValueError("Каждому правилу нужен существующий выход.")
+            raise ValueError("Each rule must reference an existing outbound.")
         if not any(value for key, value in rule.items() if key not in ("type", "outboundTag")):
-            raise ValueError("Каждому правилу нужно хотя бы одно условие.")
+            raise ValueError("Each rule needs at least one condition.")
         rules.append({**rule, "type": "field"})
     return {
         "log": {"loglevel": "warning"},
@@ -104,57 +106,54 @@ def wait_listener(port, process, timeout=12):
                 return
         except OSError:
             time.sleep(0.15)
-    raise RuntimeError(f"Локальный SOCKS5 на порту {port} не запустился.")
+    raise RuntimeError(f"The local SOCKS5 listener on port {port} failed to start.")
 
 
 def run_router(state, xray, client_binary):
-    from contextlib import ExitStack
-
     spec = json.loads((state / "routing.json").read_text(encoding="utf-8"))
     config, cascades = compile_routing(spec)
     if not spec["enabled"]:
-        raise RuntimeError("Маршрутизация отключена.")
-    processes = []
+        raise RuntimeError("Routing is disabled.")
+    processes = {}
+    env = xray_env(state / "geo")
 
-    def start(command, port):
-        process = subprocess.Popen(command, cwd=state, env=xray_env(state / "geo"))
-        processes.append(process)
-        wait_listener(port, process)
+    def stop(*_):
+        sys.exit(0)
 
-    with ExitStack() as stack:
-        import tempfile
-        import signal
-        work = Path(stack.enter_context(tempfile.TemporaryDirectory(dir=state)))
+    def start(port, *args):
+        processes[port] = subprocess.Popen(args, cwd=state, env=env)
 
-        def cleanup():
-            for process in reversed(processes):
+    signal.signal(signal.SIGTERM, stop)
+    with tempfile.TemporaryDirectory(dir=state) as directory:
+        work = Path(directory)
+        try:
+            for port, data in cascades.items():
+                path = work / f"cascade-{port}.toml"
+                path.write_text(data, encoding="utf-8")
+                start(port, client_binary, "--config", str(path))
+            path = work / "xray.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            start(int(ROUTER_ADDRESS.rsplit(":", 1)[1]), xray, "run", "-c", str(path))
+            deadline = time.monotonic() + 50
+            for port, process in processes.items():
+                wait_listener(port, process, max(0, deadline - time.monotonic()))
+            if address := os.environ.get("NOTIFY_SOCKET"):
+                with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+                    notify.sendto(b"READY=1", "\0" + address[1:] if address.startswith("@") else address)
+            while all(process.poll() is None for process in processes.values()):
+                time.sleep(0.5)
+            raise RuntimeError("An Xray or TrustTunnel Client process exited.")
+        finally:
+            for process in processes.values():
                 if process.poll() is None:
                     process.terminate()
-            for process in reversed(processes):
+            deadline = time.monotonic() + 3
+            for process in processes.values():
                 try:
-                    process.wait(timeout=3)
+                    process.wait(timeout=max(0, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-
-        def stop(*_):
-            sys.exit(0)
-
-        signal.signal(signal.SIGTERM, stop)
-        stack.callback(cleanup)
-        for port, data in cascades.items():
-            path = work / f"cascade-{port}.toml"
-            path.write_text(data, encoding="utf-8")
-            start([client_binary, "--config", str(path)], port)
-        path = work / "xray.json"
-        path.write_text(json.dumps(config), encoding="utf-8")
-        start([xray, "run", "-c", str(path)], int(ROUTER_ADDRESS.rsplit(":", 1)[1]))
-        if address := os.environ.get("NOTIFY_SOCKET"):
-            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
-                notify.sendto(b"READY=1", "\0" + address[1:] if address.startswith("@") else address)
-        while all(process.poll() is None for process in processes):
-            time.sleep(0.5)
-        raise RuntimeError("Процесс Xray или TrustTunnel Client завершился.")
 
 
 if __name__ == "__main__":

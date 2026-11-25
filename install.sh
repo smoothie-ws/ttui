@@ -46,6 +46,22 @@ download() {
     printf '%s  %s\n' "$digest" "$target" | sha256sum --check --status
 }
 
+seed_geofile() {
+    # shellcheck disable=SC2016
+    runuser -u ttui -- bash -c '
+        set -e
+        umask 077
+        target=$1
+        if [[ -e $target || -L $target ]]; then exit 0; fi
+        temporary=$(mktemp -- "$(dirname -- "$target")/.seed.XXXXXX")
+        trap '\''rm -f -- "$temporary"'\'' EXIT
+        cat > "$temporary"
+        if ! ln -T -- "$temporary" "$target"; then
+            [[ -e $target || -L $target ]]
+        fi
+    ' bash "$1" < "$2"
+}
+
 wait_service() {
     local unit=$1 before after
     before=$(systemctl show -p MainPID --value "$unit")
@@ -97,7 +113,7 @@ main() {
     local config=/etc/trusttunnel state=/var/lib/ttui
     local endpoint_tag=v1.3.1 client_tag=v1.3.0 xray_tag=v26.11.9
     local -a forwarded=() active=()
-    local unit file
+    local unit file directory
     if [[ ${1:-} == version || ( $# == 1 && ${1:-} == --version ) ]]; then
         if [[ -r $panel/VERSION ]]; then cat "$panel/VERSION"; else echo "ttui version unavailable." >&2; return 1; fi
         return
@@ -205,15 +221,20 @@ main() {
         trap 'exit 143' TERM
     fi
     id ttui >/dev/null 2>&1 || useradd --system --user-group --home-dir "$state" --shell /usr/sbin/nologin ttui
-    install -d -m 0750 -o ttui -g ttui "$state" "$state/geo" "$config"
+    for directory in "$state" "$config"; do
+        if [[ -L $directory ]]; then
+            echo "Expected a regular directory at $directory." >&2
+            exit 1
+        fi
+        if [[ ! -d $directory ]]; then install -d -m 0750 -o ttui -g ttui "$directory"; fi
+    done
+    runuser -u ttui -- mkdir -m 0750 -p -- "$state/geo"
     install -d -m 0755 "$panel" "$panel/xray" "$panel/templates" "$panel/static" /opt/trusttunnel
     install -m 0755 "$(find "$work/endpoint" -type f -name trusttunnel_endpoint -print -quit)" "$endpoint"
     install -m 0755 "$(find "$work/client" -type f -name trusttunnel_client -print -quit)" "$panel/trusttunnel_client"
     install -m 0755 "$work/xray/xray" "$panel/xray/xray"
     for file in geoip.dat geosite.dat; do
-        if [[ ! -e "$state/geo/$file" ]]; then
-            install -m 0600 -o ttui -g ttui "$work/xray/$file" "$state/geo/$file"
-        fi
+        seed_geofile "$state/geo/$file" "$work/xray/$file"
     done
     install -m 0644 "$source_dir/"{app.py,backend.py,routing.py,requirements.txt,VERSION} "$panel/"
     install -m 0755 "$source_dir/install.sh" "$panel/install.sh"
@@ -240,21 +261,18 @@ main() {
             echo "No terminal for the TrustTunnel wizard. Configure the endpoint via the Server tab."
         fi
     fi
-    if (( updating )); then
-        for unit in "${active[@]}"; do
-            systemctl restart "$unit"
-            wait_service "$unit"
-        done
-    else
+    if (( ! updating )); then
         runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init
         systemctl enable ttui.service trusttunnel.service
-        systemctl restart ttui.service
-        wait_service ttui.service
+        active=(ttui.service)
         if [[ -f "$config/vpn.toml" && -f "$config/hosts.toml" ]]; then
-            systemctl restart trusttunnel.service
-            wait_service trusttunnel.service
+            active+=(trusttunnel.service)
         fi
     fi
+    for unit in "${active[@]}"; do
+        systemctl restart "$unit"
+        wait_service "$unit"
+    done
     ln -sfn "$panel/install.sh" "$launcher"
     )
     echo "ttui $target installed."
