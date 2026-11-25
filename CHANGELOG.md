@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Configure the endpoint and first client from the web panel after installation.
 - Safely switch between existing client credentials and connection filter files.
 - Preserve the state of stopped services when applying routing changes and avoid unnecessary restarts when uploading geodata.
 - Run CI on every push to `dev`.

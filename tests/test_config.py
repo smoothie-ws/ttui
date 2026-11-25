@@ -18,6 +18,7 @@ class ConfigTest(unittest.TestCase):
         self.directory = Path(temporary.name).resolve()
         for key, path in {
             "CONFIG": self.directory,
+            "STATE": self.directory,
             "VPN": self.directory / "vpn.toml",
             "HOSTS": self.directory / "hosts.toml",
             "ROUTING": self.directory / "routing.json",
@@ -46,6 +47,23 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(b.load_routing(), spec)
         self.assertFalse(b.VPN.exists())
         self.service.assert_not_called()
+
+    def test_initial_setup_writes_config_and_preserves_it_on_retry(self):
+        def certificate(args):
+            for option in ("-out", "-keyout"):
+                Path(args[args.index(option) + 1]).write_bytes(b"generated PEM")
+
+        fields = {"hostname": "vpn.example.com", "bind": "::", "port": "443", "username": "first", "quic": "on"}
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), patch.object(b, "command", side_effect=certificate):
+            for _ in range(2):
+                with panel.app.test_request_context("/setup", method="POST", data=fields):
+                    self.assertEqual(panel.setup_endpoint().status_code, 302)
+        vpn = tomlkit.parse(b.read(b.VPN))
+        self.assertEqual(vpn["listen_address"], "[::]:443")
+        self.assertEqual(set(vpn["listen_protocols"]), {"http2", "quic"})
+        self.assertEqual(b.configured_clients(vpn)[0]["username"], "first")
+        self.assertEqual((self.directory / "endpoint-key.pem").read_bytes(), b"generated PEM")
+        self.service.assert_called_once_with("restart", b.ENDPOINT_UNIT)
 
     def test_routing_does_not_start_stopped_services(self):
         self.write_vpn()

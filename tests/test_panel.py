@@ -35,6 +35,14 @@ class PanelTest(unittest.TestCase):
             self.assertIn(b"ttui " + version, client.get(settings).data)
             load_settings.assert_called_once()
 
+    def test_public_https_forces_secure_cookie(self):
+        config = {"path": "/ttui", "secure_cookie": False}
+        with patch.object(panel, "PUBLIC_HTTPS", True), patch.object(panel, "settings", return_value=config), patch.dict(
+            panel.app.config, SECRET_KEY="test-secret"
+        ):
+            response = panel.app.test_client().get("/ttui/login", base_url="https://panel.example")
+            self.assertIn("; Secure;", response.headers["Set-Cookie"])
+
     def test_routing_preserves_priority_and_default(self):
         rules = [{"domain": [r"regexp:^test\.example$"], "outboundTag": "direct"},
                  {"ip": ["geoip:private"], "outboundTag": "block"}]

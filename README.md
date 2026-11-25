@@ -4,15 +4,19 @@ A minimal web panel for a single TrustTunnel Endpoint. Manage clients, export `t
 
 ## Installation
 
-Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64. The TrustTunnel setup wizard needs a TLS hostname for the VPN server. Point its DNS record at the server and open the endpoint port for TCP. Open the same UDP port to use HTTP/3. Let's Encrypt HTTP-01 validation requires TCP port 80.
+Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64. Choose a TLS hostname for the VPN server and point its DNS record at the server. Open the endpoint port for TCP, and open the same UDP port to use HTTP/3.
 
 ```bash
-curl -fsSL https://github.com/smoothie-ws/ttui/releases/latest/download/bootstrap.sh | sudo bash
+curl -fsSL https://github.com/smoothie-ws/ttui/releases/latest/download/bootstrap.sh | sudo bash -s -- --domain panel.example.com
 ```
 
-The installer verifies the release archive's SHA-256 checksum, starts the web panel, and prints its sign-in details before opening the separate TrustTunnel VPN endpoint wizard. To install from a working tree, run `sudo bash install.sh --source "$PWD"`. Use `--panel-only` to skip the wizard and configure the endpoint under **Server**. The installer also skips the wizard when no terminal is available. It uses TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9.
+Point the panel domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy. The installer verifies the release archive's SHA-256 checksum, starts the web panel, and prints its HTTPS URL and sign-in details. From a working tree, run `sudo bash install.sh --source "$PWD" --domain panel.example.com`. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9.
 
-The panel is available at [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/) by default. To access it from another machine, open an SSH tunnel.
+Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, listen IP and port, and the first client username. Use an existing TLS certificate or let ttui generate a self-signed one. After setup, go to **Clients** to export the first connection.
+
+See the [capability map](docs/capabilities.md) for the deployment layers and initial endpoint fields.
+
+The panel and VPN endpoint use separate TLS configurations. With managed HTTPS, use VPN port 8443 by default because Caddy uses port 443. Pass `--external-proxy` on a fresh install if you already operate an HTTPS proxy, and forward the entire panel path to `127.0.0.1:8080`. For an SSH-only installation, pass `--local` and open [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/) through this tunnel.
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 USER@SERVER
@@ -61,7 +65,7 @@ To switch to an existing credentials or filter file, change only its path in `vp
 
 The installer stops if it finds an unmanaged `trusttunnel.service`. To migrate an existing installation, back it up, move the configuration and certificates into `/etc/trusttunnel`, verify the paths and permissions for `ttui`, then retire the old service before installing. Reinstalling preserves the endpoint configuration, admin account, routing settings, and uploaded geodata files.
 
-[TrustTunnel Endpoint settings](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) В· [Setup wizard and client exports](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
+[TrustTunnel Endpoint settings](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) Р’В· [Client exports](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
 
 ## Routing and cascades
 
@@ -80,7 +84,7 @@ Upload additional Xray `.dat` databases under **Geodata files**. Xray provides t
 
 Xray receives the destination address, port, and hostname when available. Rules apply to all clients through the shared SOCKS5 inbound. Use IP rules for connections without an available hostname. UDP support depends on the outbound. HTTP proxies handle TCP.
 
-[Xray routing rules and geodata](https://xtls.github.io/en/config/routing.html) В· [Xray outbounds](https://xtls.github.io/en/config/outbound.html) В· [TrustTunnel Client SOCKS5 mode](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
+[Xray routing rules and geodata](https://xtls.github.io/en/config/routing.html) Р’В· [Xray outbounds](https://xtls.github.io/en/config/outbound.html) Р’В· [TrustTunnel Client SOCKS5 mode](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
 
 ## Design references
 

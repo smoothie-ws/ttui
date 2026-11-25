@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+{{ heading('Dashboard', 'Service status for this installation.', 'ttui ' ~ version) }}
+<div class="grid">
+  <section class="card stack">
+    <h2>TrustTunnel Endpoint</h2>
+    <p role="status">{{ {'active': 'Running', 'unconfigured': 'Not configured'}.get(endpoint, 'Stopped') }}</p>
+    <div><a class="button" href="{{ url_for('server') }}">{{ 'Set up TrustTunnel' if endpoint == 'unconfigured' else 'Server settings' }}</a></div>
+  </section>
+  <section class="card stack">
+    <h2>Xray</h2>
+    <p role="status">{{ 'Running' if router == 'active' else 'Stopped' }}</p>
+    <div><a class="button" href="{{ url_for('routing') }}">Routing settings</a></div>
+  </section>
+</div>
+{% endblock %}

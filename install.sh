@@ -9,6 +9,44 @@ sudoers=/etc/sudoers.d/ttui
 launcher=/usr/local/bin/ttui
 managed_units=(ttui.service trusttunnel.service ttui-router.service)
 
+check_public_domain() {
+    local domain=$1 label='[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
+    command -v ss >/dev/null || { echo "Install iproute2 to check the HTTPS ports." >&2; return 1; }
+    if [[ ${#domain} -gt 253 || ! $domain =~ ^$label(\.$label)+$ ]] ||
+        ! getent ahosts "$domain" >/dev/null; then
+        echo "Set a DNS record for the panel and pass its hostname with --domain." >&2
+        return 1
+    fi
+    if [[ -e /etc/caddy/Caddyfile ]] || systemctl is-active --quiet caddy.service; then
+        echo "Existing Caddy installation detected. Use --external-proxy with your own configuration." >&2
+        return 1
+    fi
+    if [[ -n $(ss -H -ltn 'sport = :80 or sport = :443') ]]; then
+        echo "TCP ports 80 and 443 must be free for Caddy." >&2
+        return 1
+    fi
+}
+
+start_panel_https() {
+    local domain=$1
+    printf '%s {\n    reverse_proxy 127.0.0.1:8080\n}\n' "$domain" >/etc/caddy/Caddyfile
+    caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+    systemctl enable caddy.service
+    systemctl restart caddy.service
+    if ! curl -fsS --retry 12 --retry-all-errors --retry-delay 5 --max-time 5 \
+        --resolve "$domain:443:127.0.0.1" "https://$domain/ttui/login" -o /dev/null; then
+        echo "Panel is installed, but HTTPS verification failed. Check DNS, ports 80/443, and journalctl -u caddy." >&2
+        return 1
+    fi
+    local status
+    status=$(curl -fsS --max-time 5 --resolve "$domain:443:127.0.0.1" -o /dev/null \
+        -w '%{http_code}' "https://$domain/ttui/")
+    if [[ $status != 302 ]]; then
+        echo "HTTPS panel did not redirect the unauthenticated request to sign-in." >&2
+        return 1
+    fi
+}
+
 fetch_release() (
     local version=$1 work base digest filename extra
     shift
@@ -108,7 +146,9 @@ finish_update() {
 }
 
 main() {
-    local source_dir='' panel_only=0 version=latest allow_downgrade=0 updating=0 target current
+    local source_dir='' version=latest allow_downgrade=0 updating=0 target current
+    local domain='' access='' adding_https=0
+    local -a packages=(ca-certificates curl openssl python3 python3-venv sudo unzip util-linux)
     local architecture xray_arch endpoint_sha client_sha xray_sha
     local config=/etc/trusttunnel state=/var/lib/ttui
     local endpoint_tag=v1.3.1 client_tag=v1.3.0 xray_tag=v26.11.9
@@ -123,9 +163,11 @@ main() {
         case "$1" in
             --source) source_dir=$(realpath "${2:?Missing source directory}"); shift ;;
             --version) version=${2:?Missing release version}; shift ;;
-            --panel-only) panel_only=1; forwarded+=(--panel-only) ;;
+            --domain) domain=${2:?Missing panel domain}; forwarded+=(--domain "$domain"); shift ;;
+            --local|--panel-only) access=local; forwarded+=(--local) ;;
+            --external-proxy) access=external; forwarded+=(--external-proxy) ;;
             --allow-downgrade) allow_downgrade=1; forwarded+=(--allow-downgrade) ;;
-            *) echo "Usage: ttui [update] [--version vX.Y.Z | --source DIR] [--panel-only] [--allow-downgrade]" >&2; return 2 ;;
+            *) echo "Usage: ttui [update] [--version vX.Y.Z | --source DIR] [--domain HOST | --local | --external-proxy] [--allow-downgrade]" >&2; return 2 ;;
         esac
         shift
     done
@@ -156,6 +198,25 @@ main() {
             fi
         fi
     fi
+    if [[ -n $domain && -n $access ]]; then
+        echo "Choose one panel access mode." >&2; return 2
+    fi
+    if (( updating )) && [[ -n $domain || -n $access ]]; then
+        echo "Updates preserve the existing access mode. Omit access options when updating." >&2; return 2
+    fi
+    if (( ! updating )) && [[ -z $access ]]; then
+        if [[ -z $domain ]]; then
+            echo "Panel HTTPS domain (or rerun with --local for SSH access):" >&2
+            if ! read -r domain </dev/tty || [[ -z $domain ]]; then
+                echo "Pass --domain HOST, --external-proxy, or --local." >&2; return 2
+            fi
+        fi
+        check_public_domain "$domain"
+        packages+=(caddy)
+        adding_https=1
+    elif [[ $access == external ]]; then
+        adding_https=1
+    fi
     if [[ ( -e $launcher || -L $launcher ) && $(readlink "$launcher") != "$panel/install.sh" ]]; then
         echo "An unmanaged $launcher already exists." >&2
         return 1
@@ -181,8 +242,7 @@ main() {
     esac
     if (( ! updating )); then
         apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates curl python3 python3-venv sudo unzip util-linux
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
     fi
     if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
         echo "Python 3.9 or newer is required." >&2
@@ -247,15 +307,25 @@ main() {
     install -m 0644 "$source_dir"/systemd/*.service "$units/"
     install -m 0440 "$source_dir/systemd/ttui.sudoers" /etc/sudoers.d/ttui
     visudo -cf /etc/sudoers.d/ttui
+    if (( adding_https )); then
+        install -d -m 0755 "$units/ttui.service.d"
+        printf '[Service]\nEnvironment=TTUI_REQUIRE_HTTPS=1\n' >"$units/ttui.service.d/10-https.conf"
+    fi
     systemctl daemon-reload
 
     if (( ! updating )); then
         credentials=$(runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init)
         echo
         echo "ttui web panel sign-in"
-        echo "Default sign-in URL: http://127.0.0.1:8080/ttui/"
+        if [[ -n $domain ]]; then
+            echo "Sign-in URL: https://$domain/ttui/"
+        elif [[ $access == external ]]; then
+            echo "Point your HTTPS reverse proxy at http://127.0.0.1:8080 and open /ttui/ on your HTTPS origin."
+        else
+            echo "Default sign-in URL: http://127.0.0.1:8080/ttui/"
+            echo "Remote access with the default bind: ssh -L 8080:127.0.0.1:8080 USER@SERVER"
+        fi
         runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --panel-info
-        echo "Remote access with the default bind: ssh -L 8080:127.0.0.1:8080 USER@SERVER"
         if [[ -n $credentials ]]; then
             echo "Save these administrator credentials (path | username | password):"
             printf '%s\n' "$credentials"
@@ -269,23 +339,7 @@ main() {
         wait_service ttui.service
         ln -sfn "$panel/install.sh" "$launcher"
         echo "ttui web panel is running."
-        if (( ! panel_only )) && [[ ! -e "$config/vpn.toml" && ! -e "$config/hosts.toml" ]]; then
-            if ( : </dev/tty ) 2>/dev/null; then
-                echo "Starting the TrustTunnel VPN endpoint wizard. The ttui panel is already available."
-                if ! (
-                    cd "$config" || exit 1
-                    umask 077
-                    setpriv --reuid ttui --regid ttui --init-groups --inh-caps +net_bind_service \
-                        --ambient-caps +net_bind_service "$endpoint" --setup-wizard \
-                        --lib-settings vpn.toml --hosts-settings hosts.toml </dev/tty
-                ); then
-                    echo "The TrustTunnel wizard failed. The ttui panel is still running. Finish setup under Server." >&2
-                    exit 1
-                fi
-            else
-                echo "No terminal for the TrustTunnel wizard. Configure the endpoint under Server in ttui."
-            fi
-        fi
+        if [[ -n $domain ]]; then start_panel_https "$domain"; fi
         if [[ -f "$config/vpn.toml" && -f "$config/hosts.toml" ]]; then
             if ! systemctl restart trusttunnel.service || ! wait_service trusttunnel.service; then
                 echo "TrustTunnel failed to start. The ttui panel is still running. Check journalctl -u trusttunnel.service." >&2

@@ -10,8 +10,10 @@ import subprocess
 import time
 from datetime import timedelta
 from functools import wraps
+from ipaddress import ip_address
 from pathlib import Path
 from threading import Lock
+from tempfile import TemporaryDirectory
 
 import tomlkit
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
@@ -24,6 +26,7 @@ import backend as b
 
 SETTINGS = b.STATE / "panel.json"
 VERSION = b.read(Path(__file__).with_name("VERSION"), "dev").strip()
+PUBLIC_HTTPS = os.environ.get("TTUI_REQUIRE_HTTPS") == "1"
 HOST_TYPES = {"main_hosts": "VPN", "ping_hosts": "Health check",
               "speedtest_hosts": "Speed test", "reverse_proxy_hosts": "Reverse proxy"}
 FILE_KEYS = ("vpn", "hosts", "credentials", "rules")
@@ -49,7 +52,7 @@ class PanelSession(SecureCookieSessionInterface):
         return request.script_root or "/"
 
     def get_cookie_secure(self, app):
-        return request_settings()["secure_cookie"]
+        return PUBLIC_HTTPS or request_settings()["secure_cookie"]
 
 
 app.session_interface = PanelSession()
@@ -152,7 +155,7 @@ def login():
             session.clear()
             session["auth"] = session_id(config)
             session.permanent = True
-            return redirect(url_for("index"))
+            return redirect(url_for("dashboard"))
     return render_template("login.html")
 
 
@@ -193,6 +196,14 @@ def check_revision(raw):
 
 
 @app.get("/")
+def dashboard():
+    configured = b.VPN.is_file() and b.HOSTS.is_file()
+    return render_template("dashboard.html", version=VERSION,
+                           endpoint=b.service_state(b.ENDPOINT_UNIT) if configured else "unconfigured",
+                           router=b.service_state(b.ROUTER_UNIT))
+
+
+@app.get("/clients")
 def index():
     with b.LOCK:
         try:
@@ -265,7 +276,8 @@ def render_server(source, version, error=None):
         hosts = {}
     return render_template("server.html", source=source, revision=version, save_error=error,
                            host_types=HOST_TYPES, hosts=hosts, routed=b.load_routing()["enabled"],
-                           launch=b.launch_options())
+                           launch=b.launch_options(), can_setup=not b.VPN.exists() and not b.HOSTS.exists(),
+                           default_endpoint_port=8443 if PUBLIC_HTTPS else 443)
 
 
 @app.get("/server")
@@ -313,6 +325,61 @@ def save_launch():
     b.endpoint_command(options)
     b.apply_endpoint({b.LAUNCH: json.dumps(options, indent=2) + "\n"}, read_vpn())
     return saved("server", "Startup options saved.")
+
+
+@app.post("/setup")
+@action("server")
+def setup_endpoint():
+    if b.VPN.exists() or b.HOSTS.exists():
+        raise ValueError("Endpoint configuration already exists. Use the TOML editor to change it.")
+    form = request.form
+    hostname = form.get("hostname", "").strip().lower()
+    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+    if len(hostname) > 253 or not re.fullmatch(rf"{label}(?:\.{label})*", hostname):
+        raise ValueError("Enter a DNS hostname using ASCII letters, digits, and hyphens.")
+    address = ip_address(form.get("bind", "").strip())
+    port = int(form.get("port", ""))
+    if not 1 <= port <= 65535:
+        raise ValueError("Enter a port from 1 to 65535.")
+    if PUBLIC_HTTPS and port in (80, 443):
+        raise ValueError("Ports 80 and 443 are reserved for panel HTTPS. Choose another VPN port.")
+    username = form.get("username", "").strip()
+    if not re.fullmatch(r"[^\s\x00-\x1f:]{1,64}", username):
+        raise ValueError("Enter a username of up to 64 characters, with no spaces or colons.")
+    password = secrets.token_urlsafe(24)
+    bind = f"[{address}]" if address.version == 6 else str(address)
+    vpn = tomlkit.item({
+        "listen_address": f"{bind}:{port}", "credentials_file": "credentials.toml",
+        "allow_private_network_connections": False, "listen_protocols": {"http2": {}},
+    })
+    if form.get("quic"):
+        vpn["listen_protocols"]["quic"] = {}
+    credentials, _ = b.related(vpn)
+    changes = {credentials: tomlkit.dumps({"client": [{"username": username, "password": password}]})}
+    cert, key = (form.get(field, "").strip() for field in ("cert_chain_path", "private_key_path"))
+    if cert or key:
+        if not cert or not key or not all((b.CONFIG / path).is_file() for path in (cert, key)):
+            raise ValueError("Provide both a readable certificate chain and a private key.")
+    else:
+        cert, key = "endpoint-cert.pem", "endpoint-key.pem"
+        for path in (b.CONFIG / cert, b.CONFIG / key):
+            changes[path] = b""
+    if any(path.exists() or path.is_symlink() for path in changes):
+        raise ValueError("Setup would replace an existing file. Use the TOML editor to reuse it.")
+    if b.CONFIG / cert in changes:
+        with TemporaryDirectory(dir=b.STATE) as directory:
+            outputs = [Path(directory) / name for name in (cert, key)]
+            b.command(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "365",
+                       "-subj", f"/CN={hostname}", "-addext", f"subjectAltName=DNS:{hostname}",
+                       "-out", str(outputs[0]), "-keyout", str(outputs[1])])
+            for name, output in zip((cert, key), outputs):
+                changes[b.CONFIG / name] = output.read_bytes()
+    changes[b.HOSTS] = tomlkit.dumps({"main_hosts": [
+        {"hostname": hostname, "cert_chain_path": cert, "private_key_path": key},
+    ]})
+    changes[b.VPN] = tomlkit.dumps(vpn)
+    b.apply_endpoint(changes, vpn)
+    return saved("index", "TrustTunnel is running. Open the first client's actions to export a connection.")
 
 
 @app.post("/hosts")
@@ -385,7 +452,7 @@ def upload_geo():
 
 @app.get("/settings")
 def panel_settings():
-    return render_template("settings.html", config=request_settings(), version=VERSION)
+    return render_template("settings.html", config=request_settings(), version=VERSION, https_required=PUBLIC_HTTPS)
 
 
 def clean_path(value):
@@ -409,7 +476,7 @@ def save_settings():
     if not check_password_hash(config["password_hash"], form.get("current_password", "")):
         raise ValueError("Enter the current password.")
     old_path = config["path"]
-    secure = form.get("secure_cookie") == "on"
+    secure = PUBLIC_HTTPS or form.get("secure_cookie") == "on"
     changed_login = username != config["username"] or bool(password)
     config.update(path=path, address=form.get("address", "").strip(),
                   username=username, secure_cookie=secure)
@@ -463,7 +530,8 @@ def main():
             print(f"ttui {path or '/'} | {config['username']} | {password}")
         return
     app.secret_key = settings()["secret"]
-    serve(app, host=os.environ.get("TTUI_BIND", "127.0.0.1"), port=int(os.environ.get("TTUI_PORT", "8080")),
+    host = "127.0.0.1" if PUBLIC_HTTPS else os.environ.get("TTUI_BIND", "127.0.0.1")
+    serve(app, host=host, port=int(os.environ.get("TTUI_PORT", "8080")),
           threads=4, max_request_body_size=app.config["MAX_CONTENT_LENGTH"])
 
 

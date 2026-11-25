@@ -11,7 +11,7 @@
       <label>Username <input name="username" value="{{ config.username }}" autocomplete="username" maxlength="64" required></label>
       <label>New password <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Leave blank to keep the current password"></label>
     </div>
-    <label class="check"><input name="secure_cookie" type="checkbox" {% if config.secure_cookie %}checked{% endif %}> Send cookies over HTTPS only</label>
+    <label class="check"><input name="secure_cookie" type="checkbox" {% if config.secure_cookie or https_required %}checked{% endif %} {% if https_required %}disabled{% endif %}> Send cookies over HTTPS only</label>
     <div class="row separate">
       <label>Current password <input type="password" name="current_password" autocomplete="current-password" maxlength="256" required></label>
       <button class="primary">Save settings</button>

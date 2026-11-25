@@ -2,6 +2,30 @@
 {% block title %}Server{% endblock %}
 {% block content %}
 {{ heading('Server', 'TLS hosts and TrustTunnel Endpoint configuration.') }}
+{% if can_setup %}
+<section class="card stack">
+  <h2>Set up TrustTunnel</h2>
+  <form class="stack" method="post" action="{{ url_for('setup_endpoint') }}">
+    {{ token() }}
+    <div class="grid">
+      <label>VPN hostname <input name="hostname" required placeholder="vpn.example.com"></label>
+      <label>Listen IP address <input name="bind" required value="0.0.0.0"></label>
+      <label>Listen port <input name="port" type="number" min="1" max="65535" required value="{{ default_endpoint_port }}"></label>
+      <label>First client username <input name="username" maxlength="64" required placeholder="laptop"></label>
+    </div>
+    <label class="check"><input type="checkbox" name="quic"> Enable HTTP/3 (QUIC)</label>
+    <details>
+      <summary>Use an existing TLS certificate</summary>
+      <div class="details-body grid">
+        <label>Certificate chain <input name="cert_chain_path" placeholder="certs/fullchain.pem"></label>
+        <label>Private key <input name="private_key_path" placeholder="certs/privkey.pem"></label>
+      </div>
+    </details>
+    <p class="subtle">ttui generates the first client password. Leave both certificate fields blank to generate a self-signed certificate.</p>
+    <div><button class="primary">Start TrustTunnel</button></div>
+  </form>
+</section>
+{% endif %}
 <section class="card stack">
   <h2>Domains</h2>
   <div class="host-list">

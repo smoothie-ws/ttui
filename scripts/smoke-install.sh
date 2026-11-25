@@ -14,7 +14,7 @@ tar -xzf dist/ttui.tar.gz -C "$work/source"
 install_panel() {
     # Keep generated credentials out of the CI log.
     # shellcheck disable=SC2024
-    if ! sudo bash "$work/source/install.sh" --source "$work/source" --panel-only >"$work/install.log" 2>&1; then
+    if ! sudo bash "$work/source/install.sh" --source "$work/source" "$@" >"$work/install.log" 2>&1; then
         sed '/^ttui .* | .* | /d' "$work/install.log" >&2
         return 1
     fi
@@ -27,18 +27,45 @@ snapshot() {
     sudo sha256sum /var/lib/ttui/panel.json /var/lib/ttui/routing.json \
         /var/lib/ttui/geo/geosite.dat /etc/trusttunnel/{vpn,hosts,credentials}.toml
 }
-install_panel
+install_panel --local
 grep -q '^Default sign-in URL: http://127.0.0.1:8080/ttui/$' "$work/install.log"
 grep -q '^Administrator username: admin$' "$work/install.log"
 grep -Eq '^ttui /ttui \| admin \| [A-Za-z0-9_-]+$' "$work/install.log"
 smoke
-# Keep the wizard output in the unprivileged test workspace.
-# shellcheck disable=SC2024
-sudo -u ttui sh -c 'cd /etc/trusttunnel &&
-    /opt/trusttunnel/trusttunnel_endpoint --setup-wizard --mode non-interactive \
-    --address 127.0.0.1:17443 --creds smoke:ci-only-test-password --hostname smoke.example \
-    --lib-settings vpn.toml --hosts-settings hosts.toml --cert-type self-signed' >"$work/wizard.log"
-sudo systemctl start trusttunnel.service
+if systemctl is-active --quiet trusttunnel.service; then
+    echo "TrustTunnel started before web setup." >&2
+    exit 1
+fi
+python3 - "$work/install.log" <<'PY'
+import re
+import sys
+from http.cookiejar import CookieJar
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import HTTPCookieProcessor, build_opener
+
+password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[1]).read_text(), re.M)[1]
+client = build_opener(HTTPCookieProcessor(CookieJar()))
+base = "http://127.0.0.1:8080/ttui"
+
+def get(path):
+    return client.open(base + path, timeout=15).read().decode()
+
+def submit(path, page, **fields):
+    fields["csrf"] = re.search(r'name="csrf" value="([^"]+)"', page)[1]
+    return client.open(base + path, urlencode(fields).encode(), timeout=30).read().decode()
+
+submit("/login", get("/login"), username="admin", password=password)
+assert "Not configured" in get("/")
+server = get("/server")
+assert "Set up TrustTunnel" in server
+page = submit("/setup", server, hostname="smoke.example", bind="127.0.0.1", port="17443", username="smoke")
+assert "TrustTunnel is running." in page, "Panel setup failed"
+assert "tt://?" in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="deeplink")
+assert "Set up TrustTunnel" not in get("/server")
+assert "Not configured" not in get("/")
+PY
+sudo systemctl is-active --quiet trusttunnel.service
 sudo -u ttui tee /var/lib/ttui/routing.json >/dev/null <<'JSON'
 {"enabled":false,"domainStrategy":"IPIfNonMatch","default":"direct","outbounds":[],"rules":[]}
 JSON

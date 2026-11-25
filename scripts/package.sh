@@ -9,7 +9,7 @@ if [[ ${1:-v$version} != "v$version" ]]; then
 fi
 mkdir -p dist
 tar -czf dist/ttui.tar.gz VERSION install.sh app.py backend.py routing.py requirements.txt \
-    templates static systemd README.md LICENSE CHANGELOG.md
+    templates static systemd docs README.md LICENSE CHANGELOG.md
 cp install.sh dist/bootstrap.sh
 (
     cd dist
