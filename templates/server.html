@@ -2,6 +2,9 @@
 {% block title %}Server{% endblock %}
 {% block content %}
 {{ heading('Server', 'TLS hosts and TrustTunnel Endpoint configuration.') }}
+{% if not can_setup %}
+<div><a href="{{ url_for('endpoint') }}" class="button">Open endpoint settings</a></div>
+{% endif %}
 {% if can_setup %}
 <section class="card stack">
   <h2>Set up TrustTunnel</h2>

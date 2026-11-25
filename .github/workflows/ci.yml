@@ -23,7 +23,7 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest discover -s tests -v
-      - run: python -m compileall -q app.py backend.py routing.py
+      - run: python -m compileall -q app.py auth.py backend.py endpoint_settings.py monitoring.py routing.py
       - run: |
           bash -n install.sh
           bash -n scripts/package.sh

@@ -8,10 +8,21 @@ import tomlkit
 
 import app as panel
 import backend as b
+import endpoint_settings
 from routing import DEFAULT_ROUTING, ROUTER_ADDRESS
 
 
 class ConfigTest(unittest.TestCase):
+    def test_endpoint_form_preserves_native_settings_outside_form(self):
+        vpn = tomlkit.parse('listen_address = "0.0.0.0:443"\n[listen_protocols.http2]\nmax_frame_size = 20000\n[metrics]\naddress = "127.0.0.1:1987"\n')
+        fields = {"bind": "::", "port": "8443", "http2": "on", "quic": "on"}
+        fields.update({key: str(default) for key, _, default in endpoint_settings.FIELDS["Timeouts (seconds)"]})
+        endpoint_settings.update(vpn, fields)
+        self.assertEqual(vpn["listen_address"], "[::]:8443")
+        self.assertEqual(vpn["listen_protocols"]["http2"]["max_frame_size"], 20000)
+        self.assertEqual(vpn["metrics"]["address"], "127.0.0.1:1987")
+        self.assertIn("quic", vpn["listen_protocols"])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

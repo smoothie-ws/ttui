@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Endpoint{% endblock %}
+{% block content %}
+{{ heading('TrustTunnel Endpoint', 'Configure the listener, protocols, and connection timeouts.') }}
+<form class="stack" method="post">
+  {{ token() }}
+  <input type="hidden" name="revision" value="{{ revision }}">
+  <input type="hidden" name="candidate" value="{{ candidate }}">
+  <section class="card stack">
+    <h2>Listener</h2>
+    <div class="grid">
+      <label>Listen IP address <input name="bind" value="{{ values.bind }}" required></label>
+      <label>Listen port <input type="number" name="port" min="1" max="65535" value="{{ values.port }}" required></label>
+    </div>
+    {% for key, label in protocols.items() %}
+    <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> {{ label }}</label>
+    {% endfor %}
+  </section>
+  {% for title, fields in groups.items() %}
+  <section class="card stack">
+    <h2>{{ title }}</h2>
+    <div class="grid">
+    {% for key, label, default in fields %}
+      {% if default is boolean %}
+      <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> {{ label }}</label>
+      {% else %}
+      <label>{{ label }} <input type="number" name="{{ key }}" min="1" max="4294967295" value="{{ values[key] }}" required></label>
+      {% endif %}
+    {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+  {% if preview is not none %}
+  <section class="card stack">
+    <h2>Proposed changes</h2>
+    {% if preview %}<textarea class="code" rows="10" readonly aria-label="Configuration diff">{{ preview }}</textarea>{% else %}<p>No changes.</p>{% endif %}
+  </section>
+  {% endif %}
+  <div class="actions">
+    <button name="operation" value="preview">Preview changes</button>
+    {% if preview %}<button class="primary" name="operation" value="apply">Apply and restart</button>{% endif %}
+    <a class="button" href="{{ url_for('server') }}">Server and advanced settings</a>
+  </div>
+</form>
+{% endblock %}

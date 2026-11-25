@@ -16,7 +16,7 @@ Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, lis
 
 See the [capability map](docs/capabilities.md) for the deployment layers and initial endpoint fields.
 
-The panel and VPN endpoint use separate TLS configurations. With managed HTTPS, use VPN port 8443 by default because Caddy uses port 443. Pass `--external-proxy` on a fresh install if you already operate an HTTPS proxy, and forward the entire panel path to `127.0.0.1:8080`. For an SSH-only installation, pass `--local` and open [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/) through this tunnel.
+The panel and VPN endpoint use separate TLS configurations. With managed HTTPS, use VPN port 8443 by default because Caddy uses port 443. Pass `--external-proxy` on a fresh install if you already operate an HTTPS proxy. Forward the entire panel path to `127.0.0.1:8080` and set `X-Forwarded-For` and `X-Forwarded-Proto` from trusted request data. For an SSH-only installation, pass `--local` and open [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/) through this tunnel.
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 USER@SERVER

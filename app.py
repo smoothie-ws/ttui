@@ -1,18 +1,18 @@
 """Server-rendered TrustTunnel admin panel."""
 import argparse
+from difflib import unified_diff
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
 import subprocess
-import time
 from datetime import timedelta
 from functools import wraps
 from ipaddress import ip_address
 from pathlib import Path
-from threading import Lock
 from tempfile import TemporaryDirectory
 
 import tomlkit
@@ -23,6 +23,9 @@ from waitress import serve
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
+import endpoint_settings as endpoint_form
+from auth import clear_attempts, reserve_attempt
+from monitoring import host_metrics
 
 SETTINGS = b.STATE / "panel.json"
 VERSION = b.read(Path(__file__).with_name("VERSION"), "dev").strip()
@@ -35,8 +38,6 @@ app = Flask(__name__)
 app.config.update(MAX_CONTENT_LENGTH=64 * 1024 * 1024, MAX_FORM_MEMORY_SIZE=4 * 1024 * 1024,
                   SESSION_COOKIE_HTTPONLY=True,
                   SESSION_COOKIE_SAMESITE="Strict", PERMANENT_SESSION_LIFETIME=timedelta(hours=12))
-login_attempts = []
-login_lock = Lock()
 
 
 def settings():
@@ -102,6 +103,8 @@ def headers(response):
         "Referrer-Policy": "no-referrer",
         "Content-Security-Policy": "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     })
+    if request.method == "POST" and request.endpoint not in (None, "login") and authenticated(request_settings()):
+        app.logger.info("Administrative request: %s, status=%s", request.endpoint, response.status_code)
     return response
 
 
@@ -140,28 +143,43 @@ def saved(page, message):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        with login_lock:
-            now = time.monotonic()
-            login_attempts[:] = [stamp for stamp in login_attempts if now - stamp < 60]
-            if len(login_attempts) >= 10:
-                return render_template("login.html", error="Too many attempts. Try again in a minute."), 429
-            config = settings()
-            password_ok = check_password_hash(config["password_hash"], request.form.get("password", ""))
-            username_ok = hmac.compare_digest(config["username"].encode(), request.form.get("username", "").encode())
-            if not password_ok or not username_ok:
-                login_attempts.append(now)
-                return render_template("login.html", error="Incorrect username or password."), 401
-            login_attempts.clear()
-            session.clear()
-            session["auth"] = session_id(config)
-            session.permanent = True
-            return redirect(url_for("dashboard"))
+        address = request.remote_addr or "unknown"
+        database = b.STATE / "sign-in.sqlite3"
+        if delay := reserve_attempt(database, address):
+            return render_template("login.html", error="Too many attempts. Try again in a minute."), 429, {
+                "Retry-After": str(delay),
+            }
+        config = settings()
+        password = request.form.get("password", "")
+        password_ok = len(password) <= 256 and check_password_hash(config["password_hash"], password)
+        username_ok = hmac.compare_digest(config["username"].encode(), request.form.get("username", "").encode())
+        if not password_ok or not username_ok:
+            return render_template("login.html", error="Incorrect username or password."), 401
+        clear_attempts(database, address)
+        app.logger.info("Administrator signed in from %s", address)
+        session.clear()
+        session["auth"] = session_id(config)
+        session.permanent = True
+        return redirect(url_for("dashboard"))
     return render_template("login.html")
 
 
 @app.post("/logout")
 def logout():
     session.clear()
+    return redirect(url_for("login"))
+
+
+@app.post("/sessions/revoke")
+@action("panel_settings")
+def revoke_sessions():
+    config = request_settings().copy()
+    if not check_password_hash(config["password_hash"], request.form.get("current_password", "")):
+        raise ValueError("Enter the current password.")
+    config["session_epoch"] = secrets.token_hex(16)
+    b.write_json(SETTINGS, config)
+    session.clear()
+    app.logger.info("Administrator revoked all sessions")
     return redirect(url_for("login"))
 
 
@@ -197,10 +215,16 @@ def check_revision(raw):
 
 @app.get("/")
 def dashboard():
-    configured = b.VPN.is_file() and b.HOSTS.is_file()
+    with b.LOCK:
+        configured = b.VPN.is_file() and b.HOSTS.is_file()
+        try:
+            clients = len(b.configured_clients(read_vpn())) if configured else 0
+        except OPERATION_ERRORS:
+            clients = None
     return render_template("dashboard.html", version=VERSION,
                            endpoint=b.service_state(b.ENDPOINT_UNIT) if configured else "unconfigured",
-                           router=b.service_state(b.ROUTER_UNIT))
+                           router=b.service_state(b.ROUTER_UNIT), clients=clients,
+                           metrics=host_metrics(b.STATE))
 
 
 @app.get("/clients")
@@ -285,6 +309,28 @@ def render_server(source, version, error=None):
 def server():
     _, _, source = server_sources()
     return render_server(source, revision(source))
+
+
+@app.route("/endpoint", methods=["GET", "POST"])
+@action("server")
+def endpoint():
+    raw = b.read(b.VPN)
+    vpn = tomlkit.parse(raw)
+    preview = None
+    if request.method == "POST":
+        check_revision(raw)
+        endpoint_form.update(vpn, request.form, (80, 443) if PUBLIC_HTTPS else ())
+        candidate = tomlkit.dumps(vpn)
+        if request.form.get("operation") == "apply":
+            if request.form.get("candidate") != revision(candidate):
+                raise ValueError("Preview the current changes before applying them.")
+            b.apply_endpoint({b.VPN: candidate}, vpn)
+            return saved("endpoint", "TrustTunnel settings applied.")
+        preview = "".join(unified_diff(raw.splitlines(keepends=True), candidate.splitlines(keepends=True),
+                                       fromfile="Current", tofile="Proposed"))
+    return render_template("endpoint.html", values=endpoint_form.values(vpn), groups=endpoint_form.FIELDS,
+                           protocols=endpoint_form.PROTOCOLS, revision=revision(raw), preview=preview,
+                           candidate=revision(tomlkit.dumps(vpn)))
 
 
 @app.post("/server")
@@ -530,9 +576,12 @@ def main():
             print(f"ttui {path or '/'} | {config['username']} | {password}")
         return
     app.secret_key = settings()["secret"]
+    app.logger.setLevel(logging.INFO)
     host = "127.0.0.1" if PUBLIC_HTTPS else os.environ.get("TTUI_BIND", "127.0.0.1")
+    proxy = {"trusted_proxy": "127.0.0.1",
+             "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto"}} if PUBLIC_HTTPS else {}
     serve(app, host=host, port=int(os.environ.get("TTUI_PORT", "8080")),
-          threads=4, max_request_body_size=app.config["MAX_CONTENT_LENGTH"])
+          threads=4, max_request_body_size=app.config["MAX_CONTENT_LENGTH"], **proxy)
 
 
 if __name__ == "__main__":

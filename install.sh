@@ -297,7 +297,7 @@ main() {
     for file in geoip.dat geosite.dat; do
         seed_geofile "$state/geo/$file" "$work/xray/$file"
     done
-    install -m 0644 "$source_dir/"{app.py,backend.py,routing.py,requirements.txt,VERSION} "$panel/"
+    install -m 0644 "$source_dir/"{app.py,auth.py,backend.py,endpoint_settings.py,monitoring.py,routing.py,requirements.txt,VERSION} "$panel/"
     install -m 0755 "$source_dir/install.sh" "$panel/install.sh"
     install -m 0644 "$source_dir"/templates/*.html "$panel/templates/"
     install -m 0644 "$source_dir"/static/* "$panel/static/"

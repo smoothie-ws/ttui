@@ -14,4 +14,23 @@
     <div><a class="button" href="{{ url_for('routing') }}">Routing settings</a></div>
   </section>
 </div>
+<div class="grid">
+  <section class="card stack">
+    <h2>Host resources</h2>
+    <dl>
+      <dt>CPU usage</dt><dd>{{ (metrics.cpu ~ '%') if metrics.cpu is not none else 'Unavailable' }}</dd>
+      <dt>RAM usage</dt><dd>{{ (metrics.ram ~ '%') if metrics.ram is not none else 'Unavailable' }}</dd>
+      <dt>Free space for panel data</dt><dd>{{ '%.2f GiB'|format(metrics.disk / 1073741824) if metrics.disk is not none else 'Unavailable' }}</dd>
+      <dt>Host uptime</dt><dd>{{ '%dd %dh %dm'|format(metrics.uptime // 86400, metrics.uptime // 3600 % 24, metrics.uptime // 60 % 60) if metrics.uptime is not none else 'Unavailable' }}</dd>
+    </dl>
+  </section>
+  <section class="card stack">
+    <h2>Connections</h2>
+    <dl>
+      <dt>Configured clients</dt><dd>{{ clients if clients is not none else 'Unavailable' }}</dd>
+      <dt>Host network totals since boot</dt>
+      <dd>{{ ('%.2f GiB received, %.2f GiB sent'|format(metrics.traffic[0] / 1073741824, metrics.traffic[1] / 1073741824)) if metrics.traffic is not none else 'Unavailable' }}</dd>
+    </dl>
+  </section>
+</div>
 {% endblock %}

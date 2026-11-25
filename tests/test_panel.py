@@ -1,14 +1,53 @@
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from werkzeug.security import generate_password_hash
 
 import app as panel
 from routing import DEFAULT_ROUTING, compile_routing
+from auth import LIMIT, reserve_attempt
 
 
 class PanelTest(unittest.TestCase):
+    def setUp(self):
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        self.state = Path(state.name)
+        patcher = patch.object(panel.b, "STATE", self.state)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_sign_in_limit_survives_reopening_database_and_is_per_address(self):
+        database = self.state / "sign-in.sqlite3"
+        for _ in range(LIMIT):
+            self.assertEqual(reserve_attempt(database, "192.0.2.1", 100), 0)
+        self.assertEqual(reserve_attempt(database, "192.0.2.1", 101), 59)
+        self.assertEqual(reserve_attempt(database, "192.0.2.2", 101), 0)
+        self.assertEqual(reserve_attempt(database, "192.0.2.1", 160), 0)
+
+    def test_revocation_invalidates_other_signed_sessions(self):
+        settings_path = self.state / "panel.json"
+        config = {"path": "/ttui", "secret": "test-secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("correct-password", method="pbkdf2:sha256:1000")}
+        panel.b.write_json(settings_path, config)
+        with patch.object(panel, "SETTINGS", settings_path), patch.dict(panel.app.config, SECRET_KEY=config["secret"]):
+            first, second = panel.app.test_client(), panel.app.test_client()
+            for client in (first, second):
+                page = client.get("/ttui/login")
+                token = re.search(rb'name="csrf" value="([^"]+)"', page.data)[1].decode()
+                self.assertEqual(client.post("/ttui/login", data={
+                    "csrf": token, "username": "admin", "password": "correct-password",
+                }).status_code, 302)
+            page = first.get("/ttui/settings")
+            token = re.search(rb'name="csrf" value="([^"]+)"', page.data)[1].decode()
+            self.assertEqual(first.post("/ttui/sessions/revoke", data={
+                "csrf": token, "current_password": "correct-password",
+            }).status_code, 302)
+            self.assertTrue(second.get("/ttui/settings").location.endswith("/ttui/login"))
+
     def test_login_and_version_at_configured_path(self):
         config = {
             "path": "/private/panel",
