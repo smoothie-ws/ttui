@@ -8,6 +8,7 @@ from unittest.mock import call, patch
 import tomlkit
 
 import app as panel
+import acme
 import backend as b
 import certificates as tls
 import endpoint_settings
@@ -16,6 +17,56 @@ from routing import DEFAULT_ROUTING, ROUTER_ADDRESS
 
 
 class ConfigTest(unittest.TestCase):
+    def test_acme_challenges_are_available_without_panel_login(self):
+        directory = acme.webroot() / ".well-known" / "acme-challenge"
+        directory.mkdir(parents=True)
+        (directory / "Example_token-1").write_text("known-authorization", encoding="ascii")
+        with patch.dict("os.environ", TTUI_ACME="1"), patch.object(
+            panel, "settings", return_value={"path": "/private", "secure_cookie": True,
+                                             "secret": "test", "password_hash": "test"},
+        ):
+            client = panel.app.test_client()
+            response = client.get(acme.CHALLENGE_PREFIX + "Example_token-1")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data, b"known-authorization")
+            self.assertEqual(client.get(acme.CHALLENGE_PREFIX + "unknown").status_code, 404)
+            self.assertEqual(client.get(acme.CHALLENGE_PREFIX + "../panel.json").status_code, 404)
+            self.assertEqual(client.get("/private/").status_code, 302)
+        with patch.dict("os.environ", TTUI_ACME="0"):
+            self.assertIsNone(acme.challenge("Example_token-1"))
+
+    def test_renewal_reloads_only_validated_changes_and_remembers_them(self):
+        host = "vpn.example.com"
+        b.HOSTS.write_text(tomlkit.dumps({"main_hosts": [{"hostname": host, **acme.live_pair(host)}]}),
+                           encoding="utf-8")
+        acme.webroot().mkdir(parents=True)
+        self.status.return_value = "active"
+        with patch.dict("os.environ", TTUI_ACME="1"), patch.object(acme, "certbot") as certbot, patch.object(
+            tls, "existing_pair", return_value={"fingerprint": "version-1"},
+        ) as verify:
+            acme.renew()
+            certbot.assert_called_once_with("renew", "--cert-name", host, timeout=180)
+            verify.assert_called_once_with(*acme.live_pair(host).values(), host)
+            self.service.assert_called_once_with("reload", b.ENDPOINT_UNIT)
+            acme.renew()
+            self.service.assert_called_once()
+            verify.side_effect = ValueError("invalid certificate")
+            with self.assertRaisesRegex(ValueError, "invalid certificate"):
+                acme.renew()
+            self.service.assert_called_once()
+
+    def test_acme_issue_validates_certbot_output_before_returning_paths(self):
+        host = "vpn.example.com"
+        with patch.dict("os.environ", TTUI_ACME="1"), patch.object(acme, "certbot") as certbot, patch.object(
+            tls, "existing_pair", return_value={"fingerprint": "validated"},
+        ) as verify:
+            pair, details = acme.issue(host, "admin@example.com")
+            self.assertEqual(pair, acme.live_pair(host))
+            self.assertEqual(details["fingerprint"], "validated")
+            self.assertTrue(acme.webroot().is_dir())
+            self.assertIn("--keep-until-expiring", certbot.call_args.args)
+            verify.assert_called_once_with(*pair.values(), host)
+
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is required for TLS certificate tests")
     def test_uploaded_tls_pair_is_validated_and_rolled_back_on_restart_failure(self):
         self.write_vpn()

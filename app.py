@@ -26,6 +26,7 @@ from waitress import serve
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
+import acme
 import certificates as tls
 import endpoint_settings as endpoint_form
 from client_manager import ClientManager
@@ -66,6 +67,8 @@ app.session_interface = PanelSession()
 
 def mounted_app(wsgi_app):
     def dispatch(environ, start_response):
+        if environ["PATH_INFO"].startswith(acme.CHALLENGE_PREFIX):
+            return wsgi_app(environ, start_response)
         config = environ["ttui.settings"] = settings()
         base = config["path"]
         path = environ["PATH_INFO"]
@@ -92,7 +95,7 @@ def session_id(config):
 def guard():
     if request.endpoint is None:
         return
-    if request.endpoint not in ("login", "static") and not authenticated(request_settings()):
+    if request.endpoint not in ("login", "static", "acme_challenge") and not authenticated(request_settings()):
         return redirect(url_for("login"))
     if request.method == "POST":
         token = session.get("csrf", "")
@@ -111,6 +114,14 @@ def headers(response):
     if request.method == "POST" and request.endpoint not in (None, "login") and authenticated(request_settings()):
         app.logger.info("Administrative request: %s, status=%s", request.endpoint, response.status_code)
     return response
+
+
+@app.get(acme.CHALLENGE_PREFIX + "<token>")
+def acme_challenge(token):
+    payload = acme.challenge(token)
+    if payload is None:
+        abort(404)
+    return payload, 200, {"Content-Type": "text/plain; charset=ascii"}
 
 
 @app.context_processor
@@ -296,6 +307,7 @@ def render_server(source, version, error=None):
     return render_template("server.html", source=source, revision=version, save_error=error,
                            routed=b.load_routing()["enabled"], launch=b.launch_options(),
                            can_setup=not b.VPN.exists() and not b.HOSTS.exists(),
+                           acme_enabled=acme.enabled(),
                            default_endpoint_port=8443 if PUBLIC_HTTPS else 443)
 
 
@@ -395,7 +407,12 @@ def setup_endpoint():
     credentials, _ = b.related(vpn)
     changes = {credentials: tomlkit.dumps({"client": [{"username": username, "password": password}]})}
     cert, key = (form.get(field, "").strip() for field in ("cert_chain_path", "private_key_path"))
-    if cert or key:
+    if email := form.get("acme_email", "").strip():
+        if cert or key or not form.get("acme_terms"):
+            raise ValueError("Choose ACME as the only certificate source and accept the ACME terms.")
+        pair, _ = acme.issue(hostname, email)
+        cert, key = pair.values()
+    elif cert or key:
         tls.existing_pair(cert, key, hostname)
     else:
         cert, key = "endpoint-cert.pem", "endpoint-key.pem"
@@ -437,7 +454,8 @@ def tls_hosts():
             if isinstance(path, str) and path not in certificate_info:
                 certificate_info[path] = tls.certificate_status(path)
     return render_template("tls.html", hosts=hosts, host_types=HOST_TYPES, revision=revision(raw),
-                           certificate_info=certificate_info, history=history, configured=configured)
+                           certificate_info=certificate_info, history=history, configured=configured,
+                           acme_enabled=acme.enabled())
 
 
 @app.post("/tls")
@@ -475,7 +493,11 @@ def update_tls_host():
         if any(host.get("hostname", "").casefold() == name for host in records):
             raise ValueError("This hostname already exists in the selected group.")
         cert_upload, key_upload = (request.files.get(key) for key in ("certificate", "private_key"))
-        if cert_upload or key_upload:
+        if email := form.get("acme_email", "").strip():
+            if cert_upload or key_upload or not form.get("acme_terms"):
+                raise ValueError("Choose ACME instead of an upload and accept the ACME terms.")
+            paths, details = acme.issue(name, email)
+        elif cert_upload or key_upload:
             paths, changes, details = tls.uploaded_pair(cert_upload, key_upload, name)
         else:
             paths = {key: form.get(key, "").strip() for key in ("cert_chain_path", "private_key_path")}
@@ -587,10 +609,14 @@ def main():
     mode.add_argument("--reset-login", action="store_true")
     mode.add_argument("--run-endpoint", action="store_true")
     mode.add_argument("--routing-enabled", action="store_true")
+    mode.add_argument("--renew-certificates", action="store_true")
     parser.add_argument("--path")
     parser.add_argument("--username")
     args = parser.parse_args()
     os.umask(0o077)
+    if args.renew_certificates:
+        acme.renew()
+        return
     if args.panel_info:
         config = settings()
         print(f"Panel path: {config['path'] or '/'}")

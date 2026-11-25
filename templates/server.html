@@ -25,7 +25,8 @@
         <label>Private key <input name="private_key_path" placeholder="certs/privkey.pem"></label>
       </div>
     </details>
-    <p class="subtle">ttui generates the first client password. Leave both certificate fields blank to generate a self-signed certificate.</p>
+    {% include "acme_fields.html" %}
+    <p class="subtle">ttui generates the first client password. With no certificate paths or ACME email, it generates a self-signed certificate.</p>
     <div><button class="primary">Start TrustTunnel</button></div>
   </form>
 </section>

@@ -8,7 +8,7 @@ if [[ ${1:-v$version} != "v$version" ]]; then
     exit 1
 fi
 mkdir -p dist
-tar -czf dist/ttui.tar.gz VERSION install.sh app.py auth.py backend.py certificates.py client_manager.py endpoint_settings.py monitoring.py routing.py requirements.txt \
+tar -czf dist/ttui.tar.gz VERSION install.sh acme.py app.py auth.py backend.py certificates.py client_manager.py endpoint_settings.py monitoring.py routing.py requirements.txt \
     templates static systemd docs README.md LICENSE CHANGELOG.md
 cp install.sh dist/bootstrap.sh
 (

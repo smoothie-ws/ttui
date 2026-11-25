@@ -29,10 +29,24 @@ check_public_domain() {
 
 start_panel_https() {
     local domain=$1
-    printf '%s {\n    reverse_proxy 127.0.0.1:8080\n}\n' "$domain" >/etc/caddy/Caddyfile
+    cat >/etc/caddy/Caddyfile <<EOF
+$domain {
+    reverse_proxy 127.0.0.1:8080
+}
+
+http:// {
+    handle /.well-known/acme-challenge/* {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle {
+        respond 404
+    }
+}
+EOF
     caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
     systemctl enable caddy.service
     systemctl restart caddy.service
+    systemctl enable --now ttui-acme.timer
     if ! curl -fsS --retry 12 --retry-all-errors --retry-delay 5 --max-time 5 \
         --resolve "$domain:443:127.0.0.1" "https://$domain/ttui/login" -o /dev/null; then
         echo "Panel is installed, but HTTPS verification failed. Check DNS, ports 80/443, and journalctl -u caddy." >&2
@@ -117,7 +131,7 @@ restore_install() {
     systemctl stop "${managed_units[@]}" || failed=1
     mv -- "$panel" "$backup/rejected-panel" || failed=1
     cp -a -- "$backup/panel" "$panel" || failed=1
-    for file in "$endpoint" "$sudoers" "${managed_units[@]/#/$units/}"; do
+    for file in "$endpoint" "$sudoers" "$units/ttui-acme.service" "$units/ttui-acme.timer" "${managed_units[@]/#/$units/}"; do
         if [[ -e $backup/$file ]]; then
             cp -a -- "$backup/$file" "$file" || failed=1
         else
@@ -212,7 +226,7 @@ main() {
             fi
         fi
         check_public_domain "$domain"
-        packages+=(caddy)
+        packages+=(caddy certbot)
         adding_https=1
     elif [[ $access == external ]]; then
         adding_https=1
@@ -269,7 +283,7 @@ main() {
         local backup="$work/backup"
         mkdir "$backup"
         cp -a -- "$panel" "$backup/panel"
-        for file in "$endpoint" "$sudoers" "${managed_units[@]/#/$units/}"; do
+        for file in "$endpoint" "$sudoers" "$units/ttui-acme.service" "$units/ttui-acme.timer" "${managed_units[@]/#/$units/}"; do
             if [[ -e $file ]]; then
                 (cd / && cp -a --parents -- "${file#/}" "$backup")
             fi
@@ -297,7 +311,7 @@ main() {
     for file in geoip.dat geosite.dat; do
         seed_geofile "$state/geo/$file" "$work/xray/$file"
     done
-    install -m 0644 "$source_dir/"{app.py,auth.py,backend.py,certificates.py,client_manager.py,endpoint_settings.py,monitoring.py,routing.py,requirements.txt,VERSION} "$panel/"
+    install -m 0644 "$source_dir/"{acme.py,app.py,auth.py,backend.py,certificates.py,client_manager.py,endpoint_settings.py,monitoring.py,routing.py,requirements.txt,VERSION} "$panel/"
     install -m 0755 "$source_dir/install.sh" "$panel/install.sh"
     install -m 0644 "$source_dir"/templates/*.html "$panel/templates/"
     install -m 0644 "$source_dir"/static/* "$panel/static/"
@@ -305,11 +319,15 @@ main() {
     "$panel/venv/bin/python" -m pip install --disable-pip-version-check -r "$panel/requirements.txt"
     chmod -R a+rX "$panel/venv"
     install -m 0644 "$source_dir"/systemd/*.service "$units/"
+    install -m 0644 "$source_dir/systemd/ttui-acme.timer" "$units/"
     install -m 0440 "$source_dir/systemd/ttui.sudoers" /etc/sudoers.d/ttui
     visudo -cf /etc/sudoers.d/ttui
     if (( adding_https )); then
         install -d -m 0755 "$units/ttui.service.d"
         printf '[Service]\nEnvironment=TTUI_REQUIRE_HTTPS=1\n' >"$units/ttui.service.d/10-https.conf"
+        if [[ -n $domain ]]; then
+            printf 'Environment=TTUI_ACME=1\n' >>"$units/ttui.service.d/10-https.conf"
+        fi
     fi
     systemctl daemon-reload
 

@@ -1,0 +1,18 @@
+# Managed by ttui
+[Unit]
+Description=Renew TrustTunnel VPN TLS certificates
+After=network-online.target ttui.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ttui
+Group=ttui
+WorkingDirectory=/opt/ttui
+Environment=TTUI_STATE=/var/lib/ttui TTUI_ACME=1
+ExecStart=/opt/ttui/venv/bin/python /opt/ttui/app.py --renew-certificates
+TimeoutStartSec=15min
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full

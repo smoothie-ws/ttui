@@ -14,6 +14,8 @@ Point the panel domain's DNS records at the server and allow inbound TCP on port
 
 Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, listen IP and port, and the first client username. Use an existing TLS certificate or let ttui generate a self-signed one. After setup, go to **Clients** to export the first connection.
 
+For a fresh installation with managed Caddy HTTPS, the setup form and **TLS & Certificates** also offer Let's Encrypt. Point the VPN hostname at this server and open TCP port 80 for HTTP-01. Use a separate VPN hostname from the panel hostname. Certbot stores VPN certificates privately under `/var/lib/ttui/acme`, and `ttui-acme.timer` runs renewal checks and reloads an active endpoint after a validated certificate change.
+
 See the [capability map](docs/capabilities.md) for the deployment layers and initial endpoint fields.
 
 The panel and VPN endpoint use separate TLS configurations. With managed HTTPS, use VPN port 8443 by default because Caddy uses port 443. Pass `--external-proxy` on a fresh install if you already operate an HTTPS proxy. Forward the entire panel path to `127.0.0.1:8080` and set `X-Forwarded-For` and `X-Forwarded-Proto` from trusted request data. For an SSH-only installation, pass `--local` and open [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/) through this tunnel.
