@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [[ -e /opt/ttui || -e /etc/trusttunnel/vpn.toml ]] || systemctl cat trusttunnel.service >/dev/null 2>&1; then
+    echo "Run the installation smoke test on a fresh VM or CI runner." >&2
+    exit 1
+fi
+umask 077
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
+mkdir "$work/source"
+(cd dist && sha256sum --check --strict ttui.tar.gz.sha256)
+tar -xzf dist/ttui.tar.gz -C "$work/source"
+install_panel() {
+    # Keep generated credentials out of the CI log.
+    # shellcheck disable=SC2024
+    if ! sudo bash "$work/source/install.sh" --source "$work/source" --panel-only >"$work/install.log" 2>&1; then
+        sed '/^ttui .* | .* | /d' "$work/install.log" >&2
+        return 1
+    fi
+}
+smoke() {
+    curl --fail --silent --show-error --retry 5 --retry-connrefused \
+        http://127.0.0.1:8080/ttui/login | grep 'ttui' >/dev/null
+}
+snapshot() {
+    sudo sha256sum /var/lib/ttui/panel.json /var/lib/ttui/routing.json \
+        /var/lib/ttui/geo/geosite.dat /etc/trusttunnel/{vpn,hosts,credentials}.toml
+}
+install_panel
+smoke
+# Keep the wizard output in the unprivileged test workspace.
+# shellcheck disable=SC2024
+sudo -u ttui sh -c 'cd /etc/trusttunnel &&
+    /opt/trusttunnel/trusttunnel_endpoint --setup-wizard --mode non-interactive \
+    --address 127.0.0.1:17443 --creds smoke:ci-only-test-password --hostname smoke.example \
+    --lib-settings vpn.toml --hosts-settings hosts.toml --cert-type self-signed' >"$work/wizard.log"
+sudo systemctl start trusttunnel.service
+sudo -u ttui tee /var/lib/ttui/routing.json >/dev/null <<'JSON'
+{"enabled":false,"domainStrategy":"IPIfNonMatch","default":"direct","outbounds":[],"rules":[]}
+JSON
+snapshot >"$work/before"
+version=$(cat "$work/source/VERSION")
+patch_version=${version##*.}
+next_version="${version%.*}.$((patch_version + 1))"
+echo "$next_version" >"$work/source/VERSION"
+install_panel
+test "$(ttui version)" = "$next_version"
+smoke
+sudo systemctl is-active --quiet trusttunnel.service
+snapshot | diff - "$work/before"
+
+# A broken panel must trigger runtime rollback, including service definitions.
+sed -i 's|^ExecStart=.*|ExecStart=/bin/false|' "$work/source/systemd/ttui.service"
+echo "${version%.*}.$((patch_version + 2))" >"$work/source/VERSION"
+if install_panel; then
+    echo "Invalid upgrade unexpectedly succeeded." >&2
+    exit 1
+fi
+grep -q 'Restoring previous installation' "$work/install.log"
+test "$(ttui version)" = "$next_version"
+smoke
+sudo systemctl is-active --quiet trusttunnel.service
+snapshot | diff - "$work/before"

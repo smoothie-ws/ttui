@@ -1,0 +1,23 @@
+# Managed by ttui
+[Unit]
+Description=ttui Xray routes and TrustTunnel cascades
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+User=ttui
+Group=ttui
+WorkingDirectory=/opt/ttui
+Environment=TTUI_STATE=/var/lib/ttui
+ExecCondition=/opt/ttui/venv/bin/python /opt/ttui/app.py --routing-enabled
+ExecStart=/opt/ttui/venv/bin/python /opt/ttui/routing.py /var/lib/ttui /opt/ttui/xray/xray /opt/ttui/trusttunnel_client
+TimeoutStartSec=60
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
