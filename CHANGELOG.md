@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Create, download, and verify private configuration backups from the panel.
+- Review host resource history, inspect or download component journals, and run service diagnostics from the panel.
 - Configure VLESS, VMess, Trojan, Shadowsocks, and TrustTunnel cascades in the visual routing editor. Validate drafts in Xray and verify geodata uploads by SHA-256.
 - Issue and renew VPN certificates with Let's Encrypt on managed Caddy installations.
 - Manage VPN TLS hosts and PEM uploads, with certificate validation, expiry warnings, and change history.

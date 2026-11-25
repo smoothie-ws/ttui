@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Backups{% endblock %}
+{% block content %}
+{{ heading('Backups', 'Save and verify snapshots of panel and VPN configuration.') }}
+<section class="card stack">
+  <h2>Create backup</h2>
+  <p class="subtle">Archives contain credentials and private keys. Keep downloaded copies in private storage.</p>
+  <form method="post" class="stack">
+    {{ token() }}
+    <input type="hidden" name="operation" value="create">
+    <div class="grid">
+      {% for key, label in components.items() %}
+      <label class="check"><input type="checkbox" name="component" value="{{ key }}" checked> {{ label }}</label>
+      {% endfor %}
+    </div>
+    <div><button class="primary">Create backup</button></div>
+  </form>
+</section>
+<section class="card stack">
+  <h2>Backup history</h2>
+  {% for name, archive in archives %}
+  <article class="journal-entry">
+    <strong>{{ name }}</strong>
+    {% if archive %}
+    <p class="subtle">{{ archive['created'] }} · ttui {{ archive['version'] }} · {{ archive['files']|length }} files</p>
+    <p class="subtle">{% for key in archive['components'] %}{{ components[key] }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% else %}
+    <p class="notice error">The archive manifest could not be read.</p>
+    {% endif %}
+    <form method="post" class="row">
+      {{ token() }}
+      <input type="hidden" name="name" value="{{ name }}">
+      <button name="operation" value="verify">Verify integrity</button>
+      <a class="button" href="{{ url_for('download_backup', name=name) }}">Download</a>
+    </form>
+  </article>
+  {% else %}
+  <p class="subtle">No backups yet.</p>
+  {% endfor %}
+</section>
+{% endblock %}

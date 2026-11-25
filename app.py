@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from ipaddress import ip_address
@@ -19,7 +20,7 @@ import tomlkit
 import qrcode
 from qrcode.exceptions import DataOverflowError
 from qrcode.image.svg import SvgPathFillImage
-from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, send_file, session, url_for
 from flask.sessions import SecureCookieSessionInterface
 from tomlkit.exceptions import ParseError
 from waitress import serve
@@ -27,12 +28,15 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
 import acme
+import backups as snapshots
 from routing import compile_routing
 import certificates as tls
+import diagnostics as system_diagnostics
 import endpoint_settings as endpoint_form
+import service_logs
 from client_manager import ClientManager
 from auth import clear_attempts, reserve_attempt
-from monitoring import host_metrics
+from monitoring import PERIODS, collect_sample, history, host_metrics
 
 SETTINGS = b.STATE / "panel.json"
 VERSION = b.read(Path(__file__).with_name("VERSION"), "dev").strip()
@@ -263,6 +267,78 @@ def index():
     return render_template("clients.html", clients=entries, address=address, initialized=initialized,
                            enabled_count=enabled_count, can_remove_last=can_remove_last,
                            query=query, status=status, endpoint=b.service_state(b.ENDPOINT_UNIT))
+
+
+@app.get("/monitoring")
+def monitoring():
+    period = request.args.get("period", "1h")
+    if period not in PERIODS:
+        abort(400)
+    services = {"ttui": b.service_state("ttui.service"), "TrustTunnel": b.service_state(b.ENDPOINT_UNIT),
+                "Xray routing": b.service_state(b.ROUTER_UNIT)}
+    if acme.enabled():
+        services["Caddy"] = b.service_state("caddy.service")
+    return render_template("monitoring.html", period=period, periods=PERIODS, samples=history(b.STATE, period),
+                           services=services, uptime=host_metrics(b.STATE, sample_cpu=False)["uptime"])
+
+
+@app.get("/logs")
+def logs():
+    source = request.args.get("source", "panel")
+    period = request.args.get("period", "")
+    query = request.args.get("q", "").strip()[:200]
+    level = request.args.get("level", "")
+    if (source not in service_logs.SOURCES or period and period not in PERIODS
+            or level not in ("", "3", "4", "6", "7")):
+        abort(400)
+    try:
+        rows = service_logs.read_logs(source, query, int(level) if level else None,
+                                      time.time() - PERIODS[period] if period else None)
+    except OPERATION_ERRORS:
+        rows = []
+        error = "The service journal is unavailable. Check the service and ttui's journal permissions."
+    else:
+        error = None
+    filters = {"source": source, "period": period, "level": level, "q": query}
+    if request.args.get("download") == "1":
+        if error:
+            return Response(error, status=503, mimetype="text/plain")
+        text = "\n".join(f"{row['time']} [{row['level']}] {row['message']}" for row in rows)
+        return Response(text + "\n" if rows else "", mimetype="text/plain",
+                        headers={"Content-Disposition": f'attachment; filename="ttui-{source}.log"'})
+    return render_template("logs.html", filters=filters, sources=service_logs.SOURCES,
+                           periods=PERIODS, rows=rows, error=error, follow=request.args.get("follow") == "1")
+
+
+@app.route("/diagnostics", methods=["GET", "POST"])
+@action("diagnostics")
+def diagnostics():
+    rows = system_diagnostics.check() if request.method == "POST" else []
+    return render_template("diagnostics.html", rows=rows)
+
+
+@app.route("/backups", methods=["GET", "POST"])
+@action("backups")
+def backups():
+    if request.method == "POST":
+        operation = request.form.get("operation")
+        if operation == "create":
+            snapshots.create(request.form.getlist("component"), VERSION)
+            return saved("backups", "Backup created.")
+        if operation == "verify":
+            snapshots.verify(request.form.get("name", ""))
+            return saved("backups", "Backup integrity verified.")
+        raise ValueError("Unknown backup operation.")
+    return render_template("backups.html", archives=snapshots.history(), components=snapshots.COMPONENTS)
+
+
+@app.get("/backups/<name>")
+def download_backup(name):
+    try:
+        path = snapshots.archive_path(name)
+    except (ValueError, OSError):
+        abort(404)
+    return send_file(path, mimetype="application/zip", as_attachment=True, max_age=0)
 
 
 @app.post("/clients")
@@ -590,7 +666,7 @@ def clean_path(value):
     if value == "/":
         return ""
     if not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
-        raise ValueError("The path must start with / and contain only letters AР Р†Р вЂљРІР‚СљZ, digits, underscores, hyphens, and slash separators.")
+        raise ValueError("The path must start with / and contain only letters A-Z, digits, underscores, hyphens, and slash separators.")
     return value
 
 
@@ -603,7 +679,7 @@ def save_settings():
     username = form.get("username", "").strip()
     password = form.get("password", "")
     if not username or len(username) > 64 or (password and not 12 <= len(password) <= 256):
-        raise ValueError("Enter a username of up to 64 characters and a new password of 12Р Р†Р вЂљРІР‚Сљ256 characters.")
+        raise ValueError("Enter a username of up to 64 characters and a new password of 12-256 characters.")
     if not check_password_hash(config["password_hash"], form.get("current_password", "")):
         raise ValueError("Enter the current password.")
     old_path = config["path"]
@@ -632,10 +708,14 @@ def main():
     mode.add_argument("--run-endpoint", action="store_true")
     mode.add_argument("--routing-enabled", action="store_true")
     mode.add_argument("--renew-certificates", action="store_true")
+    mode.add_argument("--sample-metrics", action="store_true")
     parser.add_argument("--path")
     parser.add_argument("--username")
     args = parser.parse_args()
     os.umask(0o077)
+    if args.sample_metrics:
+        collect_sample(b.STATE)
+        return
     if args.renew_certificates:
         acme.renew()
         return

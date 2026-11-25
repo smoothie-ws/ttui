@@ -8,6 +8,7 @@ units=/etc/systemd/system
 sudoers=/etc/sudoers.d/ttui
 launcher=/usr/local/bin/ttui
 managed_units=(ttui.service trusttunnel.service ttui-router.service)
+support_units=(ttui-acme.service ttui-acme.timer ttui-metrics.service ttui-metrics.timer)
 
 check_public_domain() {
     local domain=$1 label='[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
@@ -131,7 +132,7 @@ restore_install() {
     systemctl stop "${managed_units[@]}" || failed=1
     mv -- "$panel" "$backup/rejected-panel" || failed=1
     cp -a -- "$backup/panel" "$panel" || failed=1
-    for file in "$endpoint" "$sudoers" "$units/ttui-acme.service" "$units/ttui-acme.timer" "${managed_units[@]/#/$units/}"; do
+    for file in "$endpoint" "$sudoers" "${support_units[@]/#/$units/}" "${managed_units[@]/#/$units/}"; do
         if [[ -e $backup/$file ]]; then
             cp -a -- "$backup/$file" "$file" || failed=1
         else
@@ -240,6 +241,9 @@ main() {
         echo "An existing unmanaged trusttunnel.service was found. See the migration notes." >&2
         return 1
     fi
+    if (( ! updating )) && [[ ! -f "$config/vpn.toml" || ! -f "$config/hosts.toml" ]]; then
+        echo "You will configure TrustTunnel in the web panel after signing in."
+    fi
     architecture=$(uname -m)
     case "$architecture" in
         x86_64)
@@ -283,7 +287,7 @@ main() {
         local backup="$work/backup"
         mkdir "$backup"
         cp -a -- "$panel" "$backup/panel"
-        for file in "$endpoint" "$sudoers" "$units/ttui-acme.service" "$units/ttui-acme.timer" "${managed_units[@]/#/$units/}"; do
+        for file in "$endpoint" "$sudoers" "${support_units[@]/#/$units/}" "${managed_units[@]/#/$units/}"; do
             if [[ -e $file ]]; then
                 (cd / && cp -a --parents -- "${file#/}" "$backup")
             fi
@@ -311,7 +315,7 @@ main() {
     for file in geoip.dat geosite.dat; do
         seed_geofile "$state/geo/$file" "$work/xray/$file"
     done
-    install -m 0644 "$source_dir/"{acme.py,app.py,auth.py,backend.py,certificates.py,client_manager.py,endpoint_settings.py,monitoring.py,routing.py,requirements.txt,VERSION} "$panel/"
+    install -m 0644 "$source_dir/"*.py "$source_dir/"{requirements.txt,VERSION} "$panel/"
     install -m 0755 "$source_dir/install.sh" "$panel/install.sh"
     install -m 0644 "$source_dir"/templates/*.html "$panel/templates/"
     install -m 0644 "$source_dir"/static/* "$panel/static/"
@@ -319,7 +323,7 @@ main() {
     "$panel/venv/bin/python" -m pip install --disable-pip-version-check -r "$panel/requirements.txt"
     chmod -R a+rX "$panel/venv"
     install -m 0644 "$source_dir"/systemd/*.service "$units/"
-    install -m 0644 "$source_dir/systemd/ttui-acme.timer" "$units/"
+    install -m 0644 "$source_dir"/systemd/*.timer "$units/"
     install -m 0440 "$source_dir/systemd/ttui.sudoers" /etc/sudoers.d/ttui
     visudo -cf /etc/sudoers.d/ttui
     if (( adding_https )); then
@@ -364,7 +368,7 @@ main() {
                 exit 1
             fi
         else
-            echo "The VPN endpoint is not configured. Open Server in the ttui panel to complete setup."
+            echo "Sign in and open Server > Set up TrustTunnel to configure and start the VPN endpoint."
         fi
     fi
     for unit in "${active[@]}"; do
@@ -372,6 +376,7 @@ main() {
         wait_service "$unit"
     done
     ln -sfn "$panel/install.sh" "$launcher"
+    systemctl enable --now ttui-metrics.timer
     )
     echo "ttui $target installed."
 }

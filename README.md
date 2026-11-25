@@ -4,15 +4,17 @@ A minimal web panel for a single TrustTunnel Endpoint. Manage clients, export `t
 
 ## Installation
 
-Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64. Choose a TLS hostname for the VPN server and point its DNS record at the server. Open the endpoint port for TCP, and open the same UDP port to use HTTP/3.
+Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64.
+
+### Browser-first setup from a working tree
 
 ```bash
-curl -fsSL https://github.com/smoothie-ws/ttui/releases/latest/download/bootstrap.sh | sudo bash -s -- --domain panel.example.com
+sudo bash install.sh --source "$PWD" --domain panel.example.com
 ```
 
-Point the panel domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy. The installer verifies the release archive's SHA-256 checksum, starts the web panel, and prints its HTTPS URL and sign-in details. From a working tree, run `sudo bash install.sh --source "$PWD" --domain panel.example.com`. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9.
+Run the command from a checkout that includes browser-first setup. Point the panel domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy. The installer starts the web panel and prints its HTTPS URL and sign-in details. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. On a fresh server, the VPN endpoint stays unconfigured until you complete setup in the browser.
 
-Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, listen IP and port, and the first client username. Use an existing TLS certificate or let ttui generate a self-signed one. After setup, go to **Clients** to export the first connection.
+Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, listen IP and port, and the first client username. Point the VPN hostname at the server and open the endpoint port for TCP and, for HTTP/3, UDP. Use an existing TLS certificate or let ttui generate a self-signed one. After setup, go to **Clients** to export the first connection.
 
 For a fresh installation with managed Caddy HTTPS, the setup form and **TLS & Certificates** also offer Let's Encrypt. Point the VPN hostname at this server and open TCP port 80 for HTTP-01. Use a separate VPN hostname from the panel hostname. Certbot stores VPN certificates privately under `/var/lib/ttui/acme`, and `ttui-acme.timer` runs renewal checks and reloads an active endpoint after a validated certificate change.
 
@@ -33,6 +35,14 @@ sudo -u ttui env TTUI_STATE=/var/lib/ttui \
   /opt/ttui/venv/bin/python /opt/ttui/app.py --reset-login
 ```
 
+### Published releases
+
+The stable installer verifies the release archive's SHA-256 checksum. To install `v0.1.0`, use `--panel-only` to skip the terminal wizard. That release uses SSH access and offers manual TOML configuration under **Server**. Browser-first setup requires a newer build.
+
+```bash
+curl -fsSL https://github.com/smoothie-ws/ttui/releases/download/v0.1.0/bootstrap.sh | sudo bash -s -- --version v0.1.0 --panel-only
+```
+
 ## Updates
 
 ```bash
@@ -44,6 +54,10 @@ sudo ttui update --version v0.1.0
 The installer selects the latest stable GitHub release by default. It preserves `/etc/trusttunnel`, `/var/lib/ttui`, systemd drop-in files, and `/etc/default/ttui`. It restarts active services, which can briefly interrupt VPN connections. If the update fails, the installer restores the previous application files and attempts to restart the services. Add `--allow-downgrade` to install an older release explicitly. When switching between versions with different configuration formats, restore a compatible backup.
 
 For an older installation without the `ttui` command, run the installer again. It updates the panel and installs the command for future updates.
+
+## Backups
+
+Use **Backups** to select configuration components, create a ZIP archive, verify its SHA-256 checksums, and download a copy. ttui stores archives under `/var/lib/ttui/backups` with private permissions. Archives include passwords and private keys. Keep off-server copies in protected storage. Retain a separate backup of certificate files stored outside `/etc/trusttunnel`, including `/var/lib/ttui/acme` for VPN certificates issued by Certbot.
 
 ## Releases
 
@@ -67,7 +81,7 @@ To switch to an existing credentials or filter file, change only its path in `vp
 
 The installer stops if it finds an unmanaged `trusttunnel.service`. To migrate an existing installation, back it up, move the configuration and certificates into `/etc/trusttunnel`, verify the paths and permissions for `ttui`, then retire the old service before installing. Reinstalling preserves the endpoint configuration, admin account, routing settings, and uploaded geodata files.
 
-[TrustTunnel Endpoint settings](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) Р’В· [Client exports](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
+[TrustTunnel Endpoint settings](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) | [Client exports](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
 
 ## Routing and cascades
 
@@ -86,7 +100,7 @@ Upload additional Xray `.dat` databases under **Geodata files**. An optional SHA
 
 Xray receives the destination address, port, and hostname when available. Rules apply to all clients through the shared SOCKS5 inbound. Use IP rules for connections without an available hostname. UDP support depends on the outbound. HTTP proxies handle TCP.
 
-[Xray routing rules and geodata](https://xtls.github.io/en/config/routing.html) Р’В· [Xray outbounds](https://xtls.github.io/en/config/outbound.html) Р’В· [TrustTunnel Client SOCKS5 mode](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
+[Xray routing rules and geodata](https://xtls.github.io/en/config/routing.html) | [Xray outbounds](https://xtls.github.io/en/config/outbound.html) | [TrustTunnel Client SOCKS5 mode](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
 
 ## Design references
 

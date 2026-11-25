@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Monitoring{% endblock %}
+{% block scripts %}<script defer src="{{ url_for('static', filename='monitoring.js') }}"></script>{% endblock %}
+{% block content %}
+{{ heading('Monitoring', 'Host resource and network history.') }}
+<section class="card">
+  <dl>
+    <dt>Host uptime</dt><dd>{{ '%dd %dh %dm'|format(uptime // 86400, uptime // 3600 % 24, uptime // 60 % 60) if uptime is not none else 'Unavailable' }}</dd>
+    {% for name, state in services.items() %}
+    <dt>{{ name }}</dt><dd>{{ 'Running' if state == 'active' else 'Stopped' }}</dd>
+    {% endfor %}
+  </dl>
+</section>
+<section class="card stack">
+  <nav class="periods" aria-label="Time range">
+    {% for item in periods %}
+    <a href="{{ url_for('monitoring', period=item) }}" {% if item == period %}aria-current="page"{% endif %}>{{ item }}</a>
+    {% endfor %}
+  </nav>
+  {% if samples %}
+  <div id="history-data" data-points="{{ samples|tojson|forceescape }}">
+    <div class="grid">
+      <div><h2>CPU and RAM (%)</h2><canvas data-chart="usage" role="img" aria-label="CPU and RAM usage history"></canvas></div>
+      <div><h2>Host traffic (KiB/s)</h2><canvas data-chart="traffic" role="img" aria-label="Host network traffic received and sent"></canvas></div>
+      <div><h2>Free disk space (GiB)</h2><canvas data-chart="disk" role="img" aria-label="Free space for panel data"></canvas></div>
+    </div>
+  </div>
+  {% else %}
+  <p class="notice">There are no samples in this time range yet. The service collects one sample per minute.</p>
+  {% endif %}
+</section>
+{% endblock %}

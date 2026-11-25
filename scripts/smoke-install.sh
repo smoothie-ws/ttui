@@ -12,9 +12,10 @@ mkdir "$work/source"
 (cd dist && sha256sum --check --strict ttui.tar.gz.sha256)
 tar -xzf dist/ttui.tar.gz -C "$work/source"
 install_panel() {
-    # Keep generated credentials out of the CI log.
-    # shellcheck disable=SC2024
-    if ! sudo bash "$work/source/install.sh" --source "$work/source" "$@" >"$work/install.log" 2>&1; then
+    local command
+    printf -v command '%q ' sudo bash "$work/source/install.sh" --source "$work/source" "$@"
+    # Exercise an interactive terminal while keeping credentials out of the CI log.
+    if ! script -eqc "$command" /dev/null </dev/null 2>&1 | tr -d '\r' >"$work/install.log"; then
         sed '/^ttui .* | .* | /d' "$work/install.log" >&2
         return 1
     fi
@@ -31,11 +32,18 @@ install_panel --local
 grep -q '^Default sign-in URL: http://127.0.0.1:8080/ttui/$' "$work/install.log"
 grep -q '^Administrator username: admin$' "$work/install.log"
 grep -Eq '^ttui /ttui \| admin \| [A-Za-z0-9_-]+$' "$work/install.log"
+grep -Fq 'Sign in and open Server > Set up TrustTunnel' "$work/install.log"
 smoke
+for config in vpn hosts credentials; do
+    sudo test ! -e "/etc/trusttunnel/$config.toml"
+done
 if systemctl is-active --quiet trusttunnel.service; then
     echo "TrustTunnel started before web setup." >&2
     exit 1
 fi
+systemctl is-active --quiet ttui-metrics.timer
+sudo systemctl start ttui-metrics.service
+sudo -u ttui sudo -n /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui.service >/dev/null
 python3 - "$work/install.log" <<'PY'
 import re
 import sys
@@ -57,6 +65,9 @@ def submit(path, page, **fields):
 
 submit("/login", get("/login"), username="admin", password=password)
 assert "Not configured" in get("/")
+assert 'data-chart="usage"' in get("/monitoring")
+assert "The service journal is unavailable" not in get("/logs")
+assert "Accepting connections on 127.0.0.1:8080." in submit("/diagnostics", get("/diagnostics"))
 server = get("/server")
 assert "Set up TrustTunnel" in server
 page = submit("/setup", server, hostname="smoke.example", bind="127.0.0.1", port="17443", username="smoke")
@@ -64,8 +75,18 @@ assert "TrustTunnel is running." in page, "Panel setup failed"
 assert "tt://?" in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="deeplink")
 assert "Set up TrustTunnel" not in get("/server")
 assert "Not configured" not in get("/")
+backup = submit("/backups", get("/backups"), operation="create", component="panel")
+assert "Backup created." in backup
+archive = re.search(r'name="name" value="(ttui-[^\"]+\.zip)"', backup)[1]
+assert "Backup integrity verified." in submit("/backups", backup, operation="verify", name=archive)
+with client.open(f"{base}/backups/{archive}", timeout=15) as download:
+    assert download.read(2) == b"PK"
+    assert "attachment" in download.headers["Content-Disposition"]
 PY
 sudo systemctl is-active --quiet trusttunnel.service
+for config in vpn hosts credentials; do
+    sudo test -s "/etc/trusttunnel/$config.toml"
+done
 sudo -u ttui tee /var/lib/ttui/routing.json >/dev/null <<'JSON'
 {"enabled":false,"domainStrategy":"IPIfNonMatch","default":"direct","outbounds":[],"rules":[]}
 JSON

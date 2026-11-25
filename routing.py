@@ -127,7 +127,9 @@ def run_router(state, xray, client_binary):
     def stop(*_):
         sys.exit(0)
 
-    def start(port, *args):
+    def start(port, identifier, *args):
+        if env.get("JOURNAL_STREAM"):
+            args = ("/usr/bin/systemd-cat", f"--identifier={identifier}", "--stderr-priority=err", *args)
         processes[port] = subprocess.Popen(args, cwd=state, env=env)
 
     signal.signal(signal.SIGTERM, stop)
@@ -137,10 +139,10 @@ def run_router(state, xray, client_binary):
             for port, data in cascades.items():
                 path = work / f"cascade-{port}.toml"
                 path.write_text(data, encoding="utf-8")
-                start(port, client_binary, "--config", str(path))
+                start(port, "ttui-cascade", client_binary, "--config", str(path))
             path = work / "xray.json"
             path.write_text(json.dumps(config), encoding="utf-8")
-            start(int(ROUTER_ADDRESS.rsplit(":", 1)[1]), xray, "run", "-c", str(path))
+            start(int(ROUTER_ADDRESS.rsplit(":", 1)[1]), "ttui-xray", xray, "run", "-c", str(path))
             deadline = time.monotonic() + 50
             for port, process in processes.items():
                 wait_listener(port, process, max(0, deadline - time.monotonic()))
