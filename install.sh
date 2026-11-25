@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository=https://github.com/smoothie-ws/ttui
+repository=https://github.com/trusttunnel-ui/ttui-panel
 panel=/opt/ttui
 endpoint=/opt/trusttunnel/trusttunnel_endpoint
 units=/etc/systemd/system

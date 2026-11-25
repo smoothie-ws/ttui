@@ -44,7 +44,7 @@ If you lose the authenticator or the allowlist blocks your address, use the pass
 The stable installer verifies the release archive's SHA-256 checksum. To install `v0.1.0`, use `--panel-only` to skip the terminal wizard. That release uses SSH access and offers manual TOML configuration under **Server**. Browser-first setup requires a newer build.
 
 ```bash
-curl -fsSL https://github.com/smoothie-ws/ttui/releases/download/v0.1.0/bootstrap.sh | sudo bash -s -- --version v0.1.0 --panel-only
+curl -fsSL https://github.com/trusttunnel-ui/ttui-panel/releases/download/v0.1.0/bootstrap.sh | sudo bash -s -- --version v0.1.0 --panel-only
 ```
 
 ## Updates
@@ -78,7 +78,7 @@ git tag -a v0.1.0 -m "ttui v0.1.0"
 git push origin v0.1.0
 ```
 
-The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, bootstrap script, and compatibility metadata. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/smoothie-ws/ttui/releases).
+The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, bootstrap script, and compatibility metadata. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/trusttunnel-ui/ttui-panel/releases).
 
 ## Server and clients
 

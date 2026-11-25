@@ -11,8 +11,8 @@ from urllib.request import Request, urlopen
 
 import backend as b
 
-REPOSITORY = "https://github.com/smoothie-ws/ttui"
-LATEST = "https://api.github.com/repos/smoothie-ws/ttui/releases/latest"
+REPOSITORY = "https://github.com/trusttunnel-ui/ttui-panel"
+LATEST = "https://api.github.com/repos/trusttunnel-ui/ttui-panel/releases/latest"
 UNIT = "ttui-update.service"
 RELEASE_INFO = Path(__file__).with_name("release-info.json")
 COMPONENTS = {"endpoint": "TrustTunnel Endpoint", "client": "TrustTunnel Client", "xray": "Xray"}
