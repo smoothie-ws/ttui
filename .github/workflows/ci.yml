@@ -59,3 +59,12 @@ jobs:
           persist-credentials: false
       - name: Install the published release and upgrade
         run: bash scripts/smoke-upgrade-v0.1.sh
+  https-proxy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify HTTPS sign-in through Caddy
+        run: bash scripts/smoke-https.sh
