@@ -21,7 +21,7 @@
   <div class="top-inner">
     <a class="brand" href="{{ url_for('dashboard') }}">ttui</a>
     <nav aria-label="Sections">
-      {% for endpoint, label in [('dashboard','Dashboard'),('index','Clients'),('server','Server'),('routing','Routing'),('panel_settings','Settings')] %}
+      {% for endpoint, label in [('dashboard','Dashboard'),('index','Clients'),('server','Server'),('tls_hosts','TLS & Certificates'),('routing','Routing'),('panel_settings','Settings')] %}
       <a href="{{ url_for(endpoint) }}" {% if request.endpoint == endpoint or (endpoint == 'index' and request.endpoint == 'export') %}aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
     </nav>

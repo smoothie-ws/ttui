@@ -3,7 +3,8 @@
 {% block content %}
 {{ heading('Server', 'TLS hosts and TrustTunnel Endpoint configuration.') }}
 {% if not can_setup %}
-<div><a href="{{ url_for('endpoint') }}" class="button">Open endpoint settings</a></div>
+<div class="actions"><a href="{{ url_for('endpoint') }}" class="button">Open endpoint settings</a>
+  <a href="{{ url_for('tls_hosts') }}" class="button">Manage TLS hosts</a></div>
 {% endif %}
 {% if can_setup %}
 <section class="card stack">
@@ -29,30 +30,6 @@
   </form>
 </section>
 {% endif %}
-<section class="card stack">
-  <h2>Domains</h2>
-  <div class="host-list">
-    {% for key, label in host_types.items() %}
-      {% for host in hosts.get(key, []) if host is mapping %}
-      <div><strong>{{ host.hostname }}</strong><span>{{ label }}</span></div>
-      {% endfor %}
-    {% endfor %}
-  </div>
-  <details>
-    <summary>Add TLS host</summary>
-    <form class="details-body stack" method="post" action="{{ url_for('add_host') }}">
-      {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
-      <div class="grid">
-        <label>Domain <input name="hostname" required placeholder="vpn.example.com"></label>
-        <label>Purpose <select name="group">{% for key, label in host_types.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>
-        <label>Certificate chain <input name="cert_chain_path" required placeholder="certs/fullchain.pem"></label>
-        <label>Private key <input name="private_key_path" required placeholder="certs/privkey.pem"></label>
-      </div>
-      <p class="subtle">Choose files the TrustTunnel service can read. Edit hosts.toml to change or remove a host.</p>
-      <div><button class="primary">Add domain</button></div>
-    </form>
-  </details>
-</section>
 <section class="card">
   <h2>TOML configuration</h2>
   {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}

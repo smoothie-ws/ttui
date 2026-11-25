@@ -1,4 +1,5 @@
 from io import BytesIO
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,12 +9,55 @@ import tomlkit
 
 import app as panel
 import backend as b
+import certificates as tls
 import endpoint_settings
 from client_manager import ClientManager
 from routing import DEFAULT_ROUTING, ROUTER_ADDRESS
 
 
 class ConfigTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is required for TLS certificate tests")
+    def test_uploaded_tls_pair_is_validated_and_rolled_back_on_restart_failure(self):
+        self.write_vpn()
+        original = '[[main_hosts]]\nhostname = "first.example"\nallowed_sni = ["alias.example"]\n'
+        b.HOSTS.write_text(original, encoding="utf-8")
+        cert, key = self.directory / "cert.pem", self.directory / "key.pem"
+        b.command(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3",
+                   "-subj", "/CN=second.example", "-addext", "subjectAltName=DNS:second.example",
+                   "-out", str(cert), "-keyout", str(key)])
+        self.assertGreaterEqual(tls.validate(cert, key, "second.example")["days"], 2)
+        with self.assertRaises(RuntimeError):
+            tls.validate(cert, key, "wrong.example")
+        other_key = self.directory / "other.pem"
+        b.command(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
+                   "ec_paramgen_curve:prime256v1", "-out", str(other_key)])
+        with self.assertRaisesRegex(ValueError, "do not match"):
+            tls.validate(cert, other_key, "second.example")
+
+        def edit():
+            data = {
+                "revision": panel.revision(b.read(b.HOSTS)), "operation": "edit",
+                "source": "main_hosts", "group": "main_hosts", "index": "0", "hostname": "second.example",
+                "certificate": (BytesIO(cert.read_bytes()), "cert.pem"),
+                "private_key": (BytesIO(key.read_bytes()), "key.pem"),
+            }
+            with patch.dict(panel.app.config, SECRET_KEY="test-secret"), panel.app.test_request_context(
+                "/tls", method="POST", data=data,
+            ):
+                self.assertEqual(panel.update_tls_host().status_code, 302)
+
+        self.active.side_effect = RuntimeError("startup failed")
+        edit()
+        self.assertEqual(b.read(b.HOSTS), original)
+        self.assertEqual(list(self.directory.glob("tls-*-*.pem")), [])
+        self.active.side_effect = None
+        edit()
+        updated = tomlkit.parse(b.read(b.HOSTS))["main_hosts"][0]
+        self.assertEqual(updated["hostname"], "second.example")
+        self.assertEqual(updated["allowed_sni"], ["alias.example"])
+        self.assertTrue((self.directory / updated["private_key_path"]).is_file())
+        self.assertTrue((self.directory / "tls-history.json").is_file())
+
     def test_client_lifecycle_keeps_disabled_credentials_off_endpoint(self):
         vpn = tomlkit.parse('listen_address = "0.0.0.0:443"\ncredentials_file = "clients.toml"\n')
         credentials, _ = b.related(vpn)

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Manage VPN TLS hosts and PEM uploads, with certificate validation, expiry warnings, and change history.
 - Manage client profiles, search and filter clients, enable or disable accounts, and perform bulk actions. Export connection QR codes locally.
 - Configure the endpoint and first client from the web panel after installation.
 - Safely switch between existing client credentials and connection filter files.

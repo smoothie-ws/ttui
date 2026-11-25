@@ -9,7 +9,7 @@ import os
 import re
 import secrets
 import subprocess
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from ipaddress import ip_address
 from pathlib import Path
@@ -26,6 +26,7 @@ from waitress import serve
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
+import certificates as tls
 import endpoint_settings as endpoint_form
 from client_manager import ClientManager
 from auth import clear_attempts, reserve_attempt
@@ -292,13 +293,9 @@ def export():
 
 
 def render_server(source, version, error=None):
-    try:
-        hosts = host_groups(source["hosts"])
-    except ParseError:
-        hosts = {}
     return render_template("server.html", source=source, revision=version, save_error=error,
-                           host_types=HOST_TYPES, hosts=hosts, routed=b.load_routing()["enabled"],
-                           launch=b.launch_options(), can_setup=not b.VPN.exists() and not b.HOSTS.exists(),
+                           routed=b.load_routing()["enabled"], launch=b.launch_options(),
+                           can_setup=not b.VPN.exists() and not b.HOSTS.exists(),
                            default_endpoint_port=8443 if PUBLIC_HTTPS else 443)
 
 
@@ -377,10 +374,7 @@ def setup_endpoint():
     if b.VPN.exists() or b.HOSTS.exists():
         raise ValueError("Endpoint configuration already exists. Use the TOML editor to change it.")
     form = request.form
-    hostname = form.get("hostname", "").strip().lower()
-    label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
-    if len(hostname) > 253 or not re.fullmatch(rf"{label}(?:\.{label})*", hostname):
-        raise ValueError("Enter a DNS hostname using ASCII letters, digits, and hyphens.")
+    hostname = tls.hostname(form.get("hostname", ""))
     address = ip_address(form.get("bind", "").strip())
     port = int(form.get("port", ""))
     if not 1 <= port <= 65535:
@@ -402,8 +396,7 @@ def setup_endpoint():
     changes = {credentials: tomlkit.dumps({"client": [{"username": username, "password": password}]})}
     cert, key = (form.get(field, "").strip() for field in ("cert_chain_path", "private_key_path"))
     if cert or key:
-        if not cert or not key or not all((b.CONFIG / path).is_file() for path in (cert, key)):
-            raise ValueError("Provide both a readable certificate chain and a private key.")
+        tls.existing_pair(cert, key, hostname)
     else:
         cert, key = "endpoint-cert.pem", "endpoint-key.pem"
         for path in (b.CONFIG / cert, b.CONFIG / key):
@@ -426,32 +419,82 @@ def setup_endpoint():
     return saved("index", "TrustTunnel is running. Open the first client's actions to export a connection.")
 
 
-@app.post("/hosts")
-@action("server")
-def add_host():
-    vpn, _, source = server_sources()
-    check_revision(source)
-    hosts = tomlkit.parse(source["hosts"])
-    group = request.form.get("group")
-    if group not in HOST_TYPES:
+@app.get("/tls")
+def tls_hosts():
+    with b.LOCK:
+        try:
+            raw = b.read(b.HOSTS, "")
+            hosts = host_groups(raw)
+            history = json.loads(b.read(b.STATE / "tls-history.json", "[]"))
+            configured = b.VPN.is_file()
+        except OPERATION_ERRORS as error:
+            flash(str(error), "error")
+            return redirect(url_for("server"))
+    certificate_info = {}
+    for records in hosts.values():
+        for record in records:
+            path = record.get("cert_chain_path", "")
+            if isinstance(path, str) and path not in certificate_info:
+                certificate_info[path] = tls.certificate_status(path)
+    return render_template("tls.html", hosts=hosts, host_types=HOST_TYPES, revision=revision(raw),
+                           certificate_info=certificate_info, history=history, configured=configured)
+
+
+@app.post("/tls")
+@action("tls_hosts")
+def update_tls_host():
+    raw = b.read(b.HOSTS, "")
+    check_revision(raw)
+    hosts = tomlkit.parse(raw)
+    form = request.form
+    operation = form.get("operation")
+    source = form.get("source")
+    target = form.get("group")
+    if operation not in ("create", "edit", "delete"):
+        raise ValueError("Unknown TLS operation.")
+    if operation != "delete" and target not in HOST_TYPES:
         raise ValueError("Unknown host type.")
-    hostname = request.form.get("hostname", "").strip()
-    if not hostname or any(character.isspace() for character in hostname):
-        raise ValueError("Enter a hostname.")
-    records = hosts.get(group, [])
-    if any(host.get("hostname", "").casefold() == hostname.casefold() for host in records):
-        raise ValueError("This hostname already exists in the selected group.")
-    record = {"hostname": hostname}
-    for key in ("cert_chain_path", "private_key_path"):
-        value = request.form.get(key, "").strip()
-        if not value or not (b.CONFIG / value).is_file():
-            raise ValueError(f"TrustTunnel must be able to read the file specified by {key}.")
-        record[key] = value
-    if group not in hosts:
-        hosts[group] = tomlkit.aot()
-    hosts[group].append(record)
-    b.apply_endpoint({b.HOSTS: tomlkit.dumps(hosts)}, vpn)
-    return saved("server", "Host added.")
+    record = {}
+    if operation != "create":
+        index = form.get("index", type=int)
+        records = hosts.get(source, []) if source in HOST_TYPES else []
+        if index is None or not isinstance(records, list) or not 0 <= index < len(records):
+            raise ValueError("TLS host not found.")
+        record = records.pop(index)
+    changes = {}
+    details = {}
+    if operation == "delete" and not hosts.get("main_hosts"):
+        raise ValueError("Keep at least one VPN TLS host.")
+    if operation != "delete":
+        name = tls.hostname(form.get("hostname", ""))
+        if target not in hosts:
+            hosts[target] = tomlkit.aot()
+        records = hosts[target]
+        if not isinstance(records, list):
+            raise ValueError("Fix the TLS host table in the advanced editor first.")
+        if any(host.get("hostname", "").casefold() == name for host in records):
+            raise ValueError("This hostname already exists in the selected group.")
+        cert_upload, key_upload = (request.files.get(key) for key in ("certificate", "private_key"))
+        if cert_upload or key_upload:
+            paths, changes, details = tls.uploaded_pair(cert_upload, key_upload, name)
+        else:
+            paths = {key: form.get(key, "").strip() for key in ("cert_chain_path", "private_key_path")}
+            details = tls.existing_pair(*paths.values(), name)
+        record.update(hostname=name, **paths)
+        if operation == "edit" and source == target:
+            records.insert(index, record)
+        else:
+            records.append(record)
+        if not hosts.get("main_hosts"):
+            raise ValueError("Keep at least one VPN TLS host.")
+    history_file = b.STATE / "tls-history.json"
+    history = json.loads(b.read(history_file, "[]"))
+    history.insert(0, {"operation": operation, "hostname": record["hostname"],
+                       "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), **details})
+    changes[history_file] = json.dumps(history[:50], ensure_ascii=False, indent=2) + "\n"
+    changes[b.HOSTS] = tomlkit.dumps(hosts)
+    b.apply_endpoint(changes, read_vpn())
+    return saved("tls_hosts", "TLS hosts updated.")
 
 
 def render_routing(source, version, error=None):
@@ -503,7 +546,7 @@ def clean_path(value):
     if value == "/":
         return ""
     if not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
-        raise ValueError("The path must start with / and contain only letters AРІР‚вЂњZ, digits, underscores, hyphens, and slash separators.")
+        raise ValueError("The path must start with / and contain only letters AР Р†Р вЂљРІР‚СљZ, digits, underscores, hyphens, and slash separators.")
     return value
 
 
@@ -516,7 +559,7 @@ def save_settings():
     username = form.get("username", "").strip()
     password = form.get("password", "")
     if not username or len(username) > 64 or (password and not 12 <= len(password) <= 256):
-        raise ValueError("Enter a username of up to 64 characters and a new password of 12РІР‚вЂњ256 characters.")
+        raise ValueError("Enter a username of up to 64 characters and a new password of 12Р Р†Р вЂљРІР‚Сљ256 characters.")
     if not check_password_hash(config["password_hash"], form.get("current_password", "")):
         raise ValueError("Enter the current password.")
     old_path = config["path"]
