@@ -20,7 +20,6 @@ from waitress import serve
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
-from routing import compile_routing
 
 SETTINGS = b.STATE / "panel.json"
 HOST_TYPES = {"main_hosts": "VPN", "ping_hosts": "Проверка доступности",
@@ -172,7 +171,7 @@ def index():
     with b.LOCK:
         try:
             vpn, source = vpn_files()
-            entries = b.clients(tomlkit.parse(source["credentials"]))
+            entries = b.configured_clients(vpn, source["credentials"])
             hosts = host_groups(source["hosts"]).get("main_hosts", [])
             address = settings().get("address") or (hosts[0].get("hostname", "") if hosts else "")
             initialized = bool(vpn.get("listen_address") and hosts)
@@ -192,6 +191,11 @@ def update_client():
     entries = b.clients(doc)
     name = request.form.get("username", "").strip()
     operation = request.form.get("operation")
+    if not vpn.get("credentials_file"):
+        if operation != "create":
+            raise ValueError("Файл клиентов отключён.")
+        if entries:
+            raise ValueError("Подключите существующий файл клиентов в настройках сервера.")
     existing = next((entry for entry in entries if entry["username"] == name), None)
     generated = None
     if operation == "create":
@@ -222,9 +226,9 @@ def update_client():
 @app.post("/export")
 @action("index")
 def export():
-    _, source = vpn_files()
+    vpn, source = vpn_files()
     name = request.form.get("username", "")
-    if not any(entry["username"] == name for entry in b.clients(tomlkit.parse(source["credentials"]))):
+    if not any(entry["username"] == name for entry in b.configured_clients(vpn, source["credentials"])):
         raise ValueError("Клиент не найден.")
     return render_template("export.html", username=name, content=b.export_client(name, request.form),
                            fmt=request.form.get("format"))
@@ -258,20 +262,33 @@ def server():
 @app.post("/server")
 @action("server")
 def save_server():
-    data = {key: request.form.get(key, "") for key in FILE_KEYS}
-    check_revision(current_sources())
+    data = {key: request.form.get(key, "").replace("\r\n", "\n").replace("\r", "\n") for key in FILE_KEYS}
+    previous = current_sources()
+    check_revision(previous)
     try:
+        try:
+            before = tomlkit.parse(previous["vpn"])
+            old_paths = b.related(before)
+        except (ParseError, ValueError):
+            before = {}
+            old_paths = (b.CONFIG / "credentials.toml", b.CONFIG / "rules.toml")
         vpn = tomlkit.parse(data["vpn"])
-        for key in FILE_KEYS[1:]:
-            tomlkit.parse(data[key])
-        if not vpn.get("credentials_file") and data["credentials"].strip():
-            vpn["credentials_file"] = "credentials.toml"
-        if not vpn.get("rules_file") and data["rules"].strip():
-            vpn["rules_file"] = "rules.toml"
-        credentials, rules = b.related(vpn)
-        changes = {credentials: data["credentials"], b.HOSTS: data["hosts"], b.VPN: tomlkit.dumps(vpn)}
-        if vpn.get("rules_file") or data["rules"].strip():
-            changes[rules] = data["rules"]
+        tomlkit.parse(data["hosts"])
+        for key in ("credentials", "rules"):
+            option = f"{key}_file"
+            if not vpn.get(option) and not before.get(option) and data[key].strip() and data[key] != previous[key]:
+                vpn[option] = f"{key}.toml"
+        changes = {b.HOSTS: data["hosts"], b.VPN: tomlkit.dumps(vpn)}
+        for key, path, old_path in zip(("credentials", "rules"), b.related(vpn), old_paths):
+            if not vpn.get(f"{key}_file"):
+                continue
+            if path != old_path and path.exists():
+                if data[key] != previous[key]:
+                    raise ValueError(f"Сначала подключите существующий {key}_file, затем измените его содержимое.")
+                tomlkit.parse(b.read(path))
+            else:
+                tomlkit.parse(data[key])
+                changes[path] = data[key]
         b.apply_endpoint(changes, vpn)
     except OPERATION_ERRORS as error:
         return render_server(data, request.form["revision"], str(error)), 400
@@ -357,14 +374,7 @@ def upload_geo():
     data = upload.read()
     if not data:
         raise ValueError("Файл пуст.")
-    spec = b.load_routing()
-
-    def apply():
-        if spec["enabled"]:
-            b.validate_xray(compile_routing(spec)[0])
-            b.service("restart", b.ROUTER_UNIT)
-
-    b.change_files({b.GEO / upload.filename: data}, apply, apply)
+    b.replace_geofile(upload.filename, data)
     flash("Геофайл сохранён.")
     return redirect(url_for("routing"))
 
@@ -427,8 +437,9 @@ def main():
     if args.routing_enabled:
         raise SystemExit(0 if b.load_routing()["enabled"] else 1)
     if args.run_endpoint:
-        vpn, source = vpn_files()
-        b.check_clients(vpn, tomlkit.parse(source["credentials"]))
+        vpn = tomlkit.parse(b.read(b.VPN))
+        credentials, _ = b.related(vpn)
+        b.check_clients(vpn, b.read(credentials, "") if vpn.get("credentials_file") else "")
         command_line = b.endpoint_command(b.launch_options())
         os.chdir(b.CONFIG)
         os.execv(b.ENDPOINT, command_line)

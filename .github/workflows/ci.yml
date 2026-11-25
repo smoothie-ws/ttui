@@ -1,7 +1,7 @@
 name: CI
 'on':
   push:
-    branches: [main, 'codex/**']
+    branches: [dev, main]
   pull_request:
 
 permissions:

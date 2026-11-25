@@ -100,13 +100,14 @@ function redraw() {
     let address, port, user, password, advanced;
     const server = outbound.settings?.servers?.[0];
     const proxy = ["socks", "http"].includes(kind);
+    const emptyProxy = Object.keys(outbound).every((key) => ["tag", "protocol"].includes(key));
     const simple = proxy && outbound.settings?.servers?.length === 1
       && Object.keys(outbound).every((key) => ["tag", "protocol", "settings"].includes(key))
       && Object.keys(outbound.settings).every((key) => key === "servers")
       && Object.keys(server ?? {}).every((key) => ["address", "port", "users"].includes(key))
       && (!server?.users || (server.users.length <= 1
         && Object.keys(server.users[0] ?? {}).every((key) => ["user", "pass"].includes(key))));
-    if (proxy && (simple || !outbound.settings)) {
+    if (proxy && (simple || emptyProxy)) {
       const grid = node("div", "", "grid");
       box.append(grid);
       address = input(grid, "Адрес прокси", server?.address, "proxy.example.com");
@@ -217,6 +218,7 @@ function load() {
     error.hidden = true;
     return true;
   } catch (problem) {
+    editor.inert = true;
     error.textContent = problem.message;
     error.hidden = false;
     return false;

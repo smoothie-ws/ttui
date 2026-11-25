@@ -14,6 +14,7 @@ import tomlkit
 from routing import DEFAULT_ROUTING, ROUTER_ADDRESS, compile_routing, xray_env
 
 LOCK = RLock()
+ROUTER_FORWARD = {"socks5": {"address": ROUTER_ADDRESS, "extended_auth": False}}
 STATE = Path(os.environ.get("TTUI_STATE", ".ttui")).resolve()
 CONFIG = Path(os.environ.get("TTUI_CONFIG", "/etc/trusttunnel")).resolve()
 ENDPOINT = os.environ.get("TTUI_ENDPOINT", "/opt/trusttunnel/trusttunnel_endpoint")
@@ -121,8 +122,12 @@ def loopback(vpn):
         return False
 
 
-def check_clients(vpn, document):
-    if (not vpn.get("credentials_file") or not clients(document)) and not loopback(vpn):
+def configured_clients(vpn, raw):
+    return clients(tomlkit.parse(raw)) if vpn.get("credentials_file") else []
+
+
+def check_clients(vpn, raw):
+    if not configured_clients(vpn, raw) and not loopback(vpn):
         raise ValueError("Для endpoint вне loopback нужны credentials_file и хотя бы один клиент.")
 
 
@@ -160,34 +165,44 @@ def validate_xray(config):
 def change_files(changes, apply, recover):
     originals = {path: path.read_bytes() if path.exists() else None for path in changes}
     written = []
+    applying = False
     try:
         for path, content in changes.items():
             atomic(path, content)
             written.append(path)
+        applying = True
         apply()
     except Exception as error:
+        failures = []
         for path in reversed(written):
-            if originals[path] is None:
-                path.unlink(missing_ok=True)
-            else:
-                atomic(path, originals[path])
-        if written:
+            try:
+                if originals[path] is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic(path, originals[path])
+            except OSError as failed_restore:
+                failures.append(str(failed_restore))
+        if applying and not failures:
             try:
                 recover()
-            except Exception as failed_recovery:
-                raise RuntimeError(f"{error}\nОшибка восстановления служб: {failed_recovery}") from error
+            except Exception as failed_restart:
+                failures.append(str(failed_restart))
+        if failures:
+            raise RuntimeError(f"{error}\nОшибка восстановления: {'; '.join(failures)}") from error
         raise
 
 
 def apply_endpoint(changes, vpn):
     credentials, rules = related(vpn)
-    document = tomlkit.parse(changes.get(credentials, read(credentials, "")))
-    check_clients(vpn, document)
+    raw = ""
+    if vpn.get("credentials_file"):
+        raw = changes[credentials] if credentials in changes else read(credentials, "")
+    check_clients(vpn, raw)
     if vpn.get("rules_file") and not (rules in changes or rules.is_file()):
         raise ValueError("Указанный файл фильтров отсутствует.")
     if load_routing()["enabled"]:
         forward = vpn.get("forward_protocol", {})
-        if forward != {"socks5": {"address": ROUTER_ADDRESS, "extended_auth": False}}:
+        if forward != ROUTER_FORWARD:
             raise ValueError("Пока маршрутизация включена, её SOCKS5-выход управляется панелью.")
     was_active = service_state(ENDPOINT_UNIT) == "active"
 
@@ -200,50 +215,86 @@ def apply_endpoint(changes, vpn):
 
 def apply_routing(spec):
     config, _ = compile_routing(spec)
+    spec = {key: value for key, value in spec.items() if key != "_native_forward"}
     if spec["enabled"]:
         validate_xray(config)
     old = load_routing()
+    if not old["enabled"] and not spec["enabled"]:
+        write_json(ROUTING, spec)
+        return
     vpn = tomlkit.parse(read(VPN))
     credentials, _ = related(vpn)
-    check_clients(vpn, tomlkit.parse(read(credentials, "")))
-    spec.pop("_native_forward", None)
+    check_clients(vpn, read(credentials, "") if vpn.get("credentials_file") else "")
     if old["enabled"]:
         spec["_native_forward"] = old.get("_native_forward")
     elif spec["enabled"]:
         forward = vpn.get("forward_protocol")
         spec["_native_forward"] = forward.unwrap() if forward is not None else None
-    changes = {ROUTING: json.dumps(spec, ensure_ascii=False, indent=2) + "\n"}
+    previous_vpn = tomlkit.dumps(vpn)
     if spec["enabled"]:
-        vpn["forward_protocol"] = {"socks5": {"address": ROUTER_ADDRESS, "extended_auth": False}}
+        if vpn.get("forward_protocol") != ROUTER_FORWARD:
+            vpn["forward_protocol"] = ROUTER_FORWARD
     elif old["enabled"]:
         original = spec.pop("_native_forward", None)
         if original is None:
             vpn.pop("forward_protocol", None)
         else:
             vpn["forward_protocol"] = original
-        changes[ROUTING] = json.dumps(spec, ensure_ascii=False, indent=2) + "\n"
-    if old["enabled"] != spec["enabled"]:
+    changes = {ROUTING: json.dumps(spec, ensure_ascii=False, indent=2) + "\n"}
+    if tomlkit.dumps(vpn) != previous_vpn:
         changes[VPN] = tomlkit.dumps(vpn)
-    was_active = service_state(ENDPOINT_UNIT) == "active"
+    endpoint_active = service_state(ENDPOINT_UNIT) == "active"
+    router_active = service_state(ROUTER_UNIT) == "active"
+    restart_router = spec["enabled"] and (endpoint_active or router_active)
+    restart_endpoint = VPN in changes and endpoint_active
+    stop_router = not spec["enabled"] and router_active
+    touched = []
+
+    def update_service(action, unit):
+        touched.append(unit)
+        service(action, unit)
+        if action == "restart" and unit == ENDPOINT_UNIT:
+            active_endpoint()
 
     def apply():
-        if spec["enabled"]:
-            service("restart", ROUTER_UNIT)
-        if VPN in changes:
-            service("restart", ENDPOINT_UNIT)
-            active_endpoint()
-        if old["enabled"] and not spec["enabled"]:
-            service("stop", ROUTER_UNIT)
+        if restart_router:
+            update_service("restart", ROUTER_UNIT)
+        if restart_endpoint:
+            update_service("restart", ENDPOINT_UNIT)
+        if stop_router:
+            update_service("stop", ROUTER_UNIT)
 
     def recover():
-        if old["enabled"]:
+        if ROUTER_UNIT in touched and router_active:
             service("restart", ROUTER_UNIT)
-        if VPN in changes:
-            service("restart" if was_active else "stop", ENDPOINT_UNIT)
-        if not old["enabled"]:
+        if ENDPOINT_UNIT in touched:
+            service("restart", ENDPOINT_UNIT)
+            active_endpoint()
+        if not router_active and touched:
             service("stop", ROUTER_UNIT)
 
     change_files(changes, apply, recover)
+
+
+def replace_geofile(filename, data):
+    spec = load_routing()
+    config = compile_routing(spec)[0] if spec["enabled"] else None
+    router_active = config is not None and service_state(ROUTER_UNIT) == "active"
+    restarting = False
+
+    def apply():
+        nonlocal restarting
+        if config is not None:
+            validate_xray(config)
+        if router_active:
+            restarting = True
+            service("restart", ROUTER_UNIT)
+
+    def recover():
+        if restarting:
+            service("restart", ROUTER_UNIT)
+
+    change_files({GEO / filename: data}, apply, recover)
 
 
 def export_client(name, form):
