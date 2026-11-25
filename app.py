@@ -955,7 +955,8 @@ def main():
             snapshots.run_scheduled(VERSION)
         return
     if args.renew_certificates:
-        acme.renew()
+        with b.configuration_change():
+            acme.renew()
         return
     if args.panel_info:
         config = settings()

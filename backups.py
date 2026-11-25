@@ -184,6 +184,10 @@ def read_manifest(archive):
             or any(not isinstance(item, str) or item not in COMPONENTS for item in components)
             or not all(isinstance(data.get(key), str) for key in ("version", "created"))):
         raise ValueError("Backup metadata is invalid.")
+    external = data.get("external_tls_files", [])
+    if (not isinstance(external, list) or len(external) > MAX_FILES
+            or any(not isinstance(path, str) or len(path) > 4096 for path in external)):
+        raise ValueError("Backup TLS metadata is invalid.")
     if sum(entry.file_size for entry in entries if entry.filename != MANIFEST) > MAX_BYTES:
         raise ValueError("Backup exceeds the supported size.")
     return data

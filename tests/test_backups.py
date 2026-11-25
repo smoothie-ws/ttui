@@ -136,6 +136,17 @@ class BackupsTest(unittest.TestCase):
             backups.import_archive(source)
         self.assertEqual(list(backups.location().iterdir()), [])
 
+    def test_rejects_invalid_external_tls_metadata(self):
+        source = BytesIO()
+        manifest = {"format": 1, "version": "0.1.0", "created": "", "components": ["panel"],
+                    "files": {}, "external_tls_files": {"path": "invalid"}}
+        with ZipFile(source, "w") as archive:
+            archive.writestr(backups.MANIFEST, json.dumps(manifest))
+        source.seek(0)
+        with self.assertRaisesRegex(ValueError, "TLS metadata"):
+            backups.import_archive(source)
+        self.assertEqual(list(backups.location().iterdir()), [])
+
     def test_failed_xray_validation_preserves_old_geodata_without_restarting(self):
         b.VPN.write_text(tomlkit.dumps({"listen_address": "127.0.0.1:443", "forward_protocol": b.ROUTER_FORWARD}),
                          encoding="utf-8")
