@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Set native per-client connection limits, view live counters from loopback Endpoint metrics, and navigate long client lists by page.
 - Configure native HTTP and QUIC settings, limits, forwarding, metrics, ICMP, subscriptions, and inbound connection filters through forms. Save a backup before applying a reviewed change.
 - Protect administrator sign-in with an optional TOTP authenticator and IP allowlist. Review administrative actions from the settings page.
 - Check official releases and install compatible upgrades from the panel. Verify the sign-in page before accepting a restarted panel service.

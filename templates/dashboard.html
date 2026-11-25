@@ -28,6 +28,7 @@
     <h2>Connections</h2>
     <dl>
       <dt>Configured clients</dt><dd>{{ clients if clients is not none else 'Unavailable' }}</dd>
+      {% if connected is not none %}<dt>Connected client accounts</dt><dd>{{ connected }}</dd>{% endif %}
       <dt>Host network totals since boot</dt>
       <dd>{{ ('%.2f GiB received, %.2f GiB sent'|format(metrics.traffic[0] / 1073741824, metrics.traffic[1] / 1073741824)) if metrics.traffic is not none else 'Unavailable' }}</dd>
     </dl>

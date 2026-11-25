@@ -3,12 +3,60 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
+from http.client import HTTPConnection, HTTPException
+from ipaddress import ip_address
 
 import tomlkit
 
 import backend as b
 
 PROFILE_FIELDS = {"group": 64, "device": 128, "notes": 1000}
+LIMIT_FIELDS = {"max_http2_conns": "HTTP/1.1 and HTTP/2 limit", "max_http3_conns": "HTTP/3 limit"}
+METRICS_LIMIT = 4 * 1024 * 1024
+
+
+def client_statistics(vpn):
+    metrics = vpn.get("metrics")
+    protocols = vpn.get("listen_protocols")
+    if (not isinstance(metrics, dict) or metrics.get("per_client_metrics") is not True
+            or not isinstance(protocols, dict) or "http1" not in protocols):
+        return None
+    try:
+        interface, port = metrics.get("address", "127.0.0.1:1987").rsplit(":", 1)
+        address = ip_address(interface.strip("[]"))
+        if not address.is_loopback or not 1 <= int(port) <= 65535:
+            return None
+    except (AttributeError, TypeError, ValueError):
+        return None
+    connection = HTTPConnection(str(address), int(port), timeout=0.75)
+    try:
+        connection.request("GET", "/clients", headers={"Connection": "close"})
+        with connection.getresponse() as response:
+            if response.status != 200:
+                return None
+            payload = response.read(METRICS_LIMIT + 1)
+        if len(payload) > METRICS_LIMIT:
+            return None
+        clients = json.loads(payload)
+        if not isinstance(clients, list):
+            return None
+        rows = {}
+        for item in clients:
+            if (not isinstance(item, dict) or not isinstance(item.get("username"), str)
+                    or any(type(item.get(key)) is not int or not 0 <= item[key] <= 2**64 - 1
+                           for key in ("sessions", "inbound", "outbound"))):
+                continue
+            row = {key: item[key] for key in ("sessions", "inbound", "outbound")}
+            try:
+                row["ip"] = str(ip_address(item.get("ip"))) if isinstance(item.get("ip"), str) else None
+            except ValueError:
+                row["ip"] = None
+            rows[item["username"]] = row
+        return rows
+    except (OSError, HTTPException, ValueError):
+        return None
+    finally:
+        connection.close()
 
 
 class ClientManager:
@@ -40,6 +88,33 @@ class ClientManager:
     def native_entry(self, name):
         return next((entry for entry in self.entries if entry["username"] == name), None)
 
+    def display_limits(self, rows):
+        active = {entry["username"]: entry for entry in self.entries}
+        for row in rows:
+            name = row["username"]
+            if row["enabled"]:
+                entry = active[name]
+            else:
+                raw = self.records[name]["disabled"]
+                try:
+                    entry = tomlkit.parse(raw) if isinstance(raw, str) else {}
+                except tomlkit.exceptions.ParseError:
+                    entry = {}
+            row.update((key, entry.get(key, "")) for key in LIMIT_FIELDS)
+
+    @staticmethod
+    def save_limits(entry, form):
+        for key, label in LIMIT_FIELDS.items():
+            if key not in form:
+                continue
+            value = form[key].strip()
+            if not value:
+                entry.pop(key, None)
+            elif not value.isascii() or not value.isdecimal() or len(value) > 10 or int(value) > 2**32 - 1:
+                raise ValueError(f"{label} must be between 0 and 4294967295.")
+            else:
+                entry[key] = int(value)
+
     def ensure_unique(self, name):
         if (not re.fullmatch(r"[^\s\x00-\x1f:]{1,64}", name)
                 or self.native_entry(name) is not None or "disabled" in self.records.get(name, {})):
@@ -61,7 +136,9 @@ class ClientManager:
             raise ValueError("Client not found.")
         if operation == "create":
             self.ensure_unique(name)
-            self.append({"username": name, "password": self.password(form)})
+            entry = {"username": name, "password": self.password(form)}
+            self.save_limits(entry, form)
+            self.append(entry)
             self.records[name] = {"created": datetime.now(timezone.utc).date().isoformat()}
         elif operation == "disable" and active is not None:
             self.records.setdefault(name, {})["disabled"] = tomlkit.dumps(active)
@@ -86,7 +163,9 @@ class ClientManager:
                 if len(value) > limit:
                     raise ValueError(f"The {key} field is too long.")
                 record[key] = value
-            (active if active is not None else disabled)["username"] = new_name
+            entry = active if active is not None else disabled
+            self.save_limits(entry, form)
+            entry["username"] = new_name
             if disabled is not None:
                 record["disabled"] = tomlkit.dumps(disabled)
             self.records.pop(name, None)

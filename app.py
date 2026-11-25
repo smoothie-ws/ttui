@@ -38,7 +38,7 @@ import diagnostics as system_diagnostics
 import endpoint_settings as endpoint_form
 import service_logs
 import updates as updater
-from client_manager import ClientManager
+from client_manager import ClientManager, LIMIT_FIELDS, client_statistics
 from monitoring import PERIODS, collect_sample, history, host_metrics
 
 SETTINGS = b.STATE / "panel.json"
@@ -330,37 +330,58 @@ def check_revision(raw):
 
 @app.get("/")
 def dashboard():
+    vpn = {}
     with b.LOCK:
         configured = b.VPN.is_file() and b.HOSTS.is_file()
         try:
-            clients = len(b.configured_clients(read_vpn())) if configured else 0
+            if configured:
+                vpn = read_vpn()
+            accounts = {entry["username"] for entry in b.configured_clients(vpn)}
         except OPERATION_ERRORS:
-            clients = None
+            accounts = None
+    live = client_statistics(vpn) if accounts else None
+    connected = sum(name in accounts and item["sessions"] > 0 for name, item in live.items()) if live is not None else None
     return render_template("dashboard.html", version=VERSION,
                            endpoint=b.service_state(b.ENDPOINT_UNIT) if configured else "unconfigured",
-                           router=b.service_state(b.ROUTER_UNIT), clients=clients,
+                           router=b.service_state(b.ROUTER_UNIT), clients=len(accounts) if accounts is not None else None,
+                           connected=connected,
                            metrics=host_metrics(b.STATE))
 
 
 @app.get("/clients")
 def index():
-    query = request.args.get("q", "").strip()
+    query = request.args.get("q", "").strip()[:256]
     status = request.args.get("status", "")
+    page = max(1, request.args.get("page", 1, type=int))
+    page_size = 50
+    stats = None
     with b.LOCK:
         try:
             vpn = read_vpn()
             manager = ClientManager(vpn)
             entries = manager.visible(query.casefold(), status)
-            enabled_count = sum(row["enabled"] for row in manager.visible())
+            count = len(entries)
+            pages = max(1, (count + page_size - 1) // page_size)
+            page = min(page, pages)
+            entries = entries[(page - 1) * page_size:page * page_size]
+            manager.display_limits(entries)
+            enabled_count = len(manager.entries) if vpn.get("credentials_file") else 0
             hosts = host_groups(b.read(b.HOSTS, "")).get("main_hosts", [])
             address = request_settings().get("address") or (hosts[0].get("hostname", "") if hosts else "")
             initialized = bool(vpn.get("listen_address") and hosts)
             can_remove_last = b.loopback(vpn)
         except OPERATION_ERRORS:
+            vpn, count, page, pages = {}, 0, 1, 1
             entries, enabled_count, address, initialized, can_remove_last = [], 0, "", False, False
+    if initialized and entries:
+        stats = client_statistics(vpn)
+    metrics = vpn.get("metrics")
+    metrics_unavailable = bool(entries and isinstance(metrics, dict) and metrics.get("per_client_metrics") and stats is None)
     return render_template("clients.html", clients=entries, address=address, initialized=initialized,
                            enabled_count=enabled_count, can_remove_last=can_remove_last,
-                           query=query, status=status, endpoint=b.service_state(b.ENDPOINT_UNIT))
+                           query=query, status=status, endpoint=b.service_state(b.ENDPOINT_UNIT),
+                           count=count, page=page, pages=pages, stats=stats, limit_fields=LIMIT_FIELDS,
+                           metrics_unavailable=metrics_unavailable)
 
 
 @app.get("/monitoring")

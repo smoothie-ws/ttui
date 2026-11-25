@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 import re
 import shutil
 import tempfile
@@ -15,7 +16,7 @@ import acme
 import backend as b
 import certificates as tls
 import endpoint_settings
-from client_manager import ClientManager
+from client_manager import ClientManager, client_statistics
 from routing import DEFAULT_ROUTING, FIRST_CASCADE_PORT, ROUTER_ADDRESS, compile_routing
 
 
@@ -158,6 +159,63 @@ class ConfigTest(unittest.TestCase):
             apply([("keeper", "disable", {}), ("tablet", "disable", {})])
         self.assertEqual(b.read(credentials), original)
         self.assertFalse(ClientManager(vpn).visible(status="disabled"))
+
+    def test_client_limits_survive_disabling_and_can_inherit_defaults(self):
+        vpn = tomlkit.parse('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n')
+        manager = ClientManager(vpn)
+        manager.change("laptop", "create", {"max_http2_conns": "24", "max_http3_conns": "2"})
+        manager.change("laptop", "disable", {})
+        rows = manager.visible()
+        manager.display_limits(rows)
+        self.assertEqual(rows[0]["max_http2_conns"], 24)
+        manager.change("laptop", "edit", {"new_username": "laptop", "max_http2_conns": ""})
+        manager.change("laptop", "enable", {})
+        self.assertNotIn("max_http2_conns", manager.entries[0])
+        self.assertEqual(manager.entries[0]["max_http3_conns"], 2)
+
+    def test_statistics_use_loopback_and_ignore_malformed_counters(self):
+        metrics = {"per_client_metrics": True, "address": "192.0.2.1:1987"}
+        vpn = {"metrics": metrics, "listen_protocols": {"http1": {}}}
+        with patch("client_manager.HTTPConnection") as connect:
+            self.assertIsNone(client_statistics(vpn))
+            connect.assert_not_called()
+            metrics["address"] = "[::1]:1987"
+            response = connect.return_value.getresponse.return_value.__enter__.return_value
+            response.status = 200
+            response.read.return_value = json.dumps([
+                {"username": "laptop", "sessions": 0, "inbound": 1024, "outbound": 0, "ip": "2001:db8::1"},
+                {"username": "bad", "sessions": True, "inbound": 0, "outbound": 0},
+            ]).encode()
+            self.assertEqual(client_statistics(vpn), {"laptop": {"sessions": 0, "inbound": 1024, "outbound": 0,
+                                                                "ip": "2001:db8::1"}})
+            connect.assert_called_once_with("::1", 1987, timeout=0.75)
+
+    def test_client_list_paginates_filtered_matches(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n', encoding="utf-8")
+        b.HOSTS.write_text('[[main_hosts]]\nhostname = "vpn.example.com"\n', encoding="utf-8")
+        (b.CONFIG / "clients.toml").write_text(tomlkit.dumps({"client": [
+            {"username": f"client-{n:02}", "password": "secret"} for n in range(55)
+        ]}), encoding="utf-8")
+        config = {"path": "/ttui", "secret": "secret", "password_hash": "test", "secure_cookie": False}
+        with patch.object(panel, "settings", return_value=config), patch.dict(panel.app.config, SECRET_KEY="secret"):
+            client = panel.app.test_client()
+            with client.session_transaction() as state:
+                state["auth"] = panel.session_id(config)
+            page = client.get("/ttui/clients?page=2&q=client&status=enabled")
+        self.assertIn(b"Page 2 of 2", page.data)
+        self.assertIn(b">client-50</span>", page.data)
+        self.assertNotIn(b">client-49</span>", page.data)
+
+    def test_dashboard_only_counts_connected_configured_accounts(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n', encoding="utf-8")
+        b.HOSTS.touch()
+        (b.CONFIG / "clients.toml").write_text(tomlkit.dumps({"client": [
+            {"username": "first", "password": "secret"}, {"username": "other", "password": "secret"}
+        ]}), encoding="utf-8")
+        stats = {"first": {"sessions": 2}, "other": {"sessions": 0}, "removed": {"sessions": 1}}
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), panel.app.test_request_context("/"), \
+                patch.object(panel, "client_statistics", return_value=stats):
+            self.assertIn("<dt>Connected client accounts</dt><dd>1</dd>", panel.dashboard())
 
     def test_endpoint_form_preserves_native_settings_outside_form(self):
         vpn = tomlkit.parse('listen_address = "0.0.0.0:443"\n[listen_protocols.http2]\nmax_frame_size = 20000\n[metrics]\naddress = "127.0.0.1:1987"\n')

@@ -15,7 +15,7 @@
   </form>
 </section>
 <section class="card client-list">
-  <h2>Connections <span class="count">{{ clients|length }}</span></h2>
+  <h2>Connections <span class="count">{{ count }}</span></h2>
   <form class="row" method="get" action="{{ url_for('index') }}">
     <label>Search clients <input name="q" value="{{ query }}" placeholder="Username, group, device, or notes"></label>
     <label>Status <select name="status" aria-label="Status">
@@ -25,6 +25,7 @@
     </select></label>
     <button>Filter</button>
   </form>
+  {% if metrics_unavailable %}<p class="subtle">Client statistics are unavailable. Check the loopback metrics listener in <a href="{{ url_for('endpoint') }}">Endpoint settings</a>.</p>{% endif %}
   {% if clients %}
   <form id="bulk-clients" class="actions separate" method="post" action="{{ url_for('update_client') }}">
     {{ token() }}
@@ -35,10 +36,19 @@
   {% endif %}
   {% for client in clients %}
   <details>
-    <summary><span>{{ client.username }}</span><span class="subtle">{{ 'Enabled' if client.enabled else 'Disabled' }}{% if client.group %} · {{ client.group }}{% endif %}</span></summary>
+    {% set live = stats.get(client.username) if stats is not none and client.enabled else none %}
+    <summary><span>{{ client.username }}</span><span class="subtle">{{ 'Enabled' if client.enabled else 'Disabled' }}{% if client.group %} · {{ client.group }}{% endif %}{% if live %} · {{ live.sessions }} {{ 'session' if live.sessions == 1 else 'sessions' }}{% endif %}</span></summary>
     <div class="details-body">
       <label class="check"><input name="selected" value="{{ client.username }}" type="checkbox" form="bulk-clients"> Select {{ client.username }}</label>
       {% if client.created %}<p class="subtle">Created {{ client.created }}</p>{% endif %}
+      {% if live %}
+      <dl>
+        <dt>Traffic received by Endpoint</dt><dd>{{ live.inbound|filesizeformat(true) }}</dd>
+        <dt>Traffic sent to client</dt><dd>{{ live.outbound|filesizeformat(true) }}</dd>
+        {% if live.ip %}<dt>Observed client IP</dt><dd>{{ live.ip }}</dd>{% endif %}
+      </dl>
+      <p class="subtle">Traffic counters reset when the Endpoint restarts.</p>
+      {% endif %}
       {% if client.enabled %}
       <form class="stack" method="post" action="{{ url_for('export') }}">
         {{ token() }}<input type="hidden" name="username" value="{{ client.username }}">
@@ -69,6 +79,9 @@
             <label>Client username <input name="new_username" value="{{ client.username }}" maxlength="64" required></label>
             <label>Group <input name="group" value="{{ client.group }}" maxlength="64"></label>
             <label>Device <input name="device" value="{{ client.device }}" maxlength="128"></label>
+            {% for key, label in limit_fields.items() %}
+            <label>{{ label }} <input name="{{ key }}" value="{{ client[key] }}" inputmode="numeric" pattern="[0-9]+" maxlength="10" placeholder="Use server default"></label>
+            {% endfor %}
           </div>
           <label>Notes <textarea name="notes" maxlength="1000" rows="2">{{ client.notes }}</textarea></label>
           <div><button name="operation" value="edit">Save client</button></div>
@@ -103,5 +116,12 @@
   {% else %}
   <p class="subtle">No clients yet.</p>
   {% endfor %}
+  {% if pages > 1 %}
+  <nav class="row separate" aria-label="Client pages">
+    {% if page > 1 %}<a class="button" href="{{ url_for('index', page=page-1, q=query, status=status) }}">Previous</a>{% endif %}
+    <span>Page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a class="button" href="{{ url_for('index', page=page+1, q=query, status=status) }}">Next</a>{% endif %}
+  </nav>
+  {% endif %}
 </section>
 {% endblock %}

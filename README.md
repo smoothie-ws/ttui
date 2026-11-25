@@ -82,6 +82,8 @@ The **Release** workflow verifies the tagged commit, reruns the checks, and publ
 
 ## Server and clients
 
+In each client card, set HTTP/1.1 and HTTP/2 or HTTP/3 connection limits. Blank limits inherit the Endpoint defaults. To display native session counts, traffic counters, and observed IPs in client cards, enable HTTP/1.1 and per-client metrics on a loopback address in **Endpoint settings**. Traffic counters reset when the Endpoint restarts.
+
 Use **Server → Open endpoint settings** to configure protocol buffers and limits, native forwarding, ICMP, Prometheus metrics, or HTTPS subscriptions. In **Server → Connection filters**, add, reorder, and preview native inbound rules. ttui saves a configuration backup before applying either form and restores the previous files if the Endpoint fails to restart.
 
 - **Clients.** Create, edit, enable, disable, or delete clients individually, and apply enable, disable, or delete to selected clients in one operation. Filter by status or search usernames, groups, devices, and notes. Export enabled clients as a `tt://` link, a locally generated QR code, or TOML. Rotating a password, disabling access, or deleting a client revokes its old access after the server restarts. An endpoint bound to loopback can run without clients for local development. The panel keeps disabled credentials and client profiles under `/var/lib/ttui`, so include that directory in protected backups.
