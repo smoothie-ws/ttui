@@ -1,0 +1,23 @@
+# Managed by ttui
+[Unit]
+Description=ttui TrustTunnel admin panel
+After=network.target
+
+[Service]
+Type=simple
+User=ttui
+Group=ttui
+WorkingDirectory=/opt/ttui
+Environment=TTUI_STATE=/var/lib/ttui
+EnvironmentFile=-/etc/default/ttui
+ExecStart=/opt/ttui/venv/bin/python /opt/ttui/app.py
+Restart=on-failure
+RestartSec=3
+UMask=0077
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/etc/trusttunnel
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

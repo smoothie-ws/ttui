@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Маршрутизация{% endblock %}
+{% block scripts %}<script defer src="{{ url_for('static', filename='routing.js') }}"></script>{% endblock %}
+{% block content %}
+<div class="page-title">
+  <div><h1>Маршрутизация</h1><p class="subtle">Первое совпавшее правило выбирает выход.</p></div>
+  <span class="status {% if router == 'active' %}online{% endif %}">Xray · {{ 'работает' if router == 'active' else 'остановлен' }}</span>
+</div>
+{% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
+<form id="routing-form" class="stack" method="post" action="{{ url_for('save_routing') }}">
+  {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
+  <div id="routing-editor" class="stack" hidden>
+    <section class="card stack">
+      <label class="check"><input id="routing-enabled" type="checkbox"> Включить маршрутизацию</label>
+      <div class="row">
+        <label>Выход по умолчанию <select id="routing-default"></select></label>
+        <label>Разрешение DNS для IP-правил <select id="routing-strategy">
+          <option value="AsIs">Только известный IP</option><option value="IPIfNonMatch">Если домен не совпал</option><option value="IPOnDemand">При проверке IP</option>
+        </select></label>
+      </div>
+    </section>
+    <section class="card stack">
+      <div class="section-title"><h2>Выходы</h2><button type="button" id="add-outbound">Добавить выход</button></div>
+      <p class="subtle">Встроенные выходы: direct (Freedom) и block (блокировка).</p>
+      <div id="outbounds" class="stack"></div>
+    </section>
+    <section class="card stack">
+      <div class="section-title"><h2>Правила</h2><button type="button" id="add-rule">Добавить правило</button></div>
+      <div id="rules" class="stack"></div>
+      <p class="subtle">Домены: domain:example.org, regexp:, geosite:, ext:файл.dat:группа. IP: CIDR, geoip:, ext:файл.dat:группа.</p>
+    </section>
+  </div>
+  <details class="card" id="routing-raw" open>
+    <summary>Конфигурация JSON</summary>
+    <div class="details-body stack">
+      <textarea class="code" name="spec" id="routing-spec" aria-label="Конфигурация маршрутизации JSON" rows="16" spellcheck="false">{{ source }}</textarea>
+      <div><button id="load-spec" type="button" hidden>Загрузить JSON в редактор</button></div>
+    </div>
+  </details>
+  <p id="routing-error" class="notice error" role="alert" hidden></p>
+  <div><button class="primary">Применить маршрутизацию</button></div>
+</form>
+<section class="card stack">
+  <h2>Геофайлы</h2>
+  {% if geofiles %}<div class="files">{% for file in geofiles %}<code>{{ file }}</code>{% endfor %}</div>{% endif %}
+  <form class="row" method="post" action="{{ url_for('upload_geo') }}" enctype="multipart/form-data">
+    {{ token() }}
+    <label>Файл Xray .dat <input name="data" type="file" accept=".dat" required></label>
+    <button>Загрузить или заменить</button>
+  </form>
+</section>
+{% endblock %}

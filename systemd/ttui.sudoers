@@ -1,0 +1,1 @@
+ttui ALL=(root) NOPASSWD: /usr/bin/systemctl restart trusttunnel.service, /usr/bin/systemctl stop trusttunnel.service, /usr/bin/systemctl restart ttui-router.service, /usr/bin/systemctl stop ttui-router.service

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Настройки{% endblock %}
+{% block content %}
+<div class="page-title"><div><h1>Настройки</h1><p class="subtle">Веб-доступ и параметры администратора.</p></div><span class="status">ttui {{ version }}</span></div>
+<section class="card">
+  <form class="stack" method="post" action="{{ url_for('save_settings') }}">
+    {{ token() }}
+    <div class="grid">
+      <label>Путь панели <input name="path" value="{{ config.path or '/' }}" required spellcheck="false"></label>
+      <label>Публичный адрес TrustTunnel <input name="address" value="{{ config.address }}" placeholder="vpn.example.com:443"></label>
+      <label>Логин <input name="username" value="{{ config.username }}" autocomplete="username" maxlength="64" required></label>
+      <label>Новый пароль <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Оставьте пустым для сохранения"></label>
+    </div>
+    <label class="check"><input name="secure_cookie" type="checkbox" {% if config.secure_cookie %}checked{% endif %}> Использовать cookies только по HTTPS</label>
+    <div class="row separate">
+      <label>Текущий пароль <input type="password" name="current_password" autocomplete="current-password" maxlength="256" required></label>
+      <button class="primary">Сохранить настройки</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
