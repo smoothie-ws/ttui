@@ -392,7 +392,7 @@ def clean_path(value):
     if value == "/":
         return ""
     if not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
-        raise ValueError("The path must start with / and contain only letters A–Z, digits, underscores, hyphens, and slash separators.")
+        raise ValueError("The path must start with / and contain only letters AвЂ“Z, digits, underscores, hyphens, and slash separators.")
     return value
 
 
@@ -405,7 +405,7 @@ def save_settings():
     username = form.get("username", "").strip()
     password = form.get("password", "")
     if not username or len(username) > 64 or (password and not 12 <= len(password) <= 256):
-        raise ValueError("Enter a username of up to 64 characters and a new password of 12–256 characters.")
+        raise ValueError("Enter a username of up to 64 characters and a new password of 12вЂ“256 characters.")
     if not check_password_hash(config["password_hash"], form.get("current_password", "")):
         raise ValueError("Enter the current password.")
     old_path = config["path"]
@@ -429,6 +429,7 @@ def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--init", action="store_true")
+    mode.add_argument("--panel-info", action="store_true")
     mode.add_argument("--reset-login", action="store_true")
     mode.add_argument("--run-endpoint", action="store_true")
     mode.add_argument("--routing-enabled", action="store_true")
@@ -436,6 +437,11 @@ def main():
     parser.add_argument("--username")
     args = parser.parse_args()
     os.umask(0o077)
+    if args.panel_info:
+        config = settings()
+        print(f"Panel path: {config['path'] or '/'}")
+        print(f"Administrator username: {config['username']}")
+        return
     if args.routing_enabled:
         raise SystemExit(0 if b.load_routing()["enabled"] else 1)
     if args.run_endpoint:

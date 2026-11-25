@@ -10,7 +10,7 @@ Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64
 curl -fsSL https://github.com/smoothie-ws/ttui/releases/latest/download/bootstrap.sh | sudo bash
 ```
 
-The installer verifies the release archive's SHA-256 checksum, runs the TrustTunnel setup wizard, and prints the generated administrator password. To install from a working tree, run `sudo bash install.sh --source "$PWD"`. Use `--panel-only` to skip the wizard and configure the endpoint under **Server**. The installer also skips the wizard when no terminal is available. It uses TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9.
+The installer verifies the release archive's SHA-256 checksum, starts the web panel, and prints its sign-in details before opening the separate TrustTunnel VPN endpoint wizard. To install from a working tree, run `sudo bash install.sh --source "$PWD"`. Use `--panel-only` to skip the wizard and configure the endpoint under **Server**. The installer also skips the wizard when no terminal is available. It uses TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9.
 
 The panel is available at [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/) by default. To access it from another machine, open an SSH tunnel.
 
@@ -61,7 +61,7 @@ To switch to an existing credentials or filter file, change only its path in `vp
 
 The installer stops if it finds an unmanaged `trusttunnel.service`. To migrate an existing installation, back it up, move the configuration and certificates into `/etc/trusttunnel`, verify the paths and permissions for `ttui`, then retire the old service before installing. Reinstalling preserves the endpoint configuration, admin account, routing settings, and uploaded geodata files.
 
-[TrustTunnel Endpoint settings](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) · [Setup wizard and client exports](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
+[TrustTunnel Endpoint settings](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) В· [Setup wizard and client exports](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
 
 ## Routing and cascades
 
@@ -80,7 +80,7 @@ Upload additional Xray `.dat` databases under **Geodata files**. Xray provides t
 
 Xray receives the destination address, port, and hostname when available. Rules apply to all clients through the shared SOCKS5 inbound. Use IP rules for connections without an available hostname. UDP support depends on the outbound. HTTP proxies handle TCP.
 
-[Xray routing rules and geodata](https://xtls.github.io/en/config/routing.html) · [Xray outbounds](https://xtls.github.io/en/config/outbound.html) · [TrustTunnel Client SOCKS5 mode](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
+[Xray routing rules and geodata](https://xtls.github.io/en/config/routing.html) В· [Xray outbounds](https://xtls.github.io/en/config/outbound.html) В· [TrustTunnel Client SOCKS5 mode](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
 
 ## Design references
 

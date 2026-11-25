@@ -28,6 +28,9 @@ snapshot() {
         /var/lib/ttui/geo/geosite.dat /etc/trusttunnel/{vpn,hosts,credentials}.toml
 }
 install_panel
+grep -q '^Default sign-in URL: http://127.0.0.1:8080/ttui/$' "$work/install.log"
+grep -q '^Administrator username: admin$' "$work/install.log"
+grep -Eq '^ttui /ttui \| admin \| [A-Za-z0-9_-]+$' "$work/install.log"
 smoke
 # Keep the wizard output in the unprivileged test workspace.
 # shellcheck disable=SC2024

@@ -113,7 +113,7 @@ main() {
     local config=/etc/trusttunnel state=/var/lib/ttui
     local endpoint_tag=v1.3.1 client_tag=v1.3.0 xray_tag=v26.11.9
     local -a forwarded=() active=()
-    local unit file directory
+    local unit file directory credentials
     if [[ ${1:-} == version || ( $# == 1 && ${1:-} == --version ) ]]; then
         if [[ -r $panel/VERSION ]]; then cat "$panel/VERSION"; else echo "ttui version unavailable." >&2; return 1; fi
         return
@@ -145,6 +145,7 @@ main() {
     [[ $target =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
         echo "Invalid VERSION file." >&2; return 1;
     }
+    echo "Installing ttui $target (web panel and TrustTunnel tools)."
     if [[ -f $state/panel.json && -f $panel/app.py && -x $panel/venv/bin/python ]]; then
         updating=1
         if [[ -f $panel/VERSION ]]; then
@@ -248,25 +249,50 @@ main() {
     visudo -cf /etc/sudoers.d/ttui
     systemctl daemon-reload
 
-    if (( ! updating && ! panel_only )) && [[ ! -e "$config/vpn.toml" && ! -e "$config/hosts.toml" ]]; then
-        if ( : </dev/tty ) 2>/dev/null; then
-            (
-                cd "$config"
-                umask 077
-                setpriv --reuid ttui --regid ttui --init-groups --inh-caps +net_bind_service \
-                    --ambient-caps +net_bind_service "$endpoint" --setup-wizard \
-                    --lib-settings vpn.toml --hosts-settings hosts.toml </dev/tty
-            )
-        else
-            echo "No terminal for the TrustTunnel wizard. Configure the endpoint via the Server tab."
-        fi
-    fi
     if (( ! updating )); then
-        runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init
+        credentials=$(runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init)
+        echo
+        echo "ttui web panel sign-in"
+        echo "Default sign-in URL: http://127.0.0.1:8080/ttui/"
+        runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --panel-info
+        echo "Remote access with the default bind: ssh -L 8080:127.0.0.1:8080 USER@SERVER"
+        if [[ -n $credentials ]]; then
+            echo "Save these administrator credentials (path | username | password):"
+            printf '%s\n' "$credentials"
+        else
+            echo "The existing administrator password was kept."
+        fi
+        echo "Password reset: sudo -u ttui env TTUI_STATE=$state $panel/venv/bin/python $panel/app.py --reset-login"
+        echo
         systemctl enable ttui.service trusttunnel.service
-        active=(ttui.service)
+        systemctl restart ttui.service
+        wait_service ttui.service
+        ln -sfn "$panel/install.sh" "$launcher"
+        echo "ttui web panel is running."
+        if (( ! panel_only )) && [[ ! -e "$config/vpn.toml" && ! -e "$config/hosts.toml" ]]; then
+            if ( : </dev/tty ) 2>/dev/null; then
+                echo "Starting the TrustTunnel VPN endpoint wizard. The ttui panel is already available."
+                if ! (
+                    cd "$config" || exit 1
+                    umask 077
+                    setpriv --reuid ttui --regid ttui --init-groups --inh-caps +net_bind_service \
+                        --ambient-caps +net_bind_service "$endpoint" --setup-wizard \
+                        --lib-settings vpn.toml --hosts-settings hosts.toml </dev/tty
+                ); then
+                    echo "The TrustTunnel wizard failed. The ttui panel is still running. Finish setup under Server." >&2
+                    exit 1
+                fi
+            else
+                echo "No terminal for the TrustTunnel wizard. Configure the endpoint under Server in ttui."
+            fi
+        fi
         if [[ -f "$config/vpn.toml" && -f "$config/hosts.toml" ]]; then
-            active+=(trusttunnel.service)
+            if ! systemctl restart trusttunnel.service || ! wait_service trusttunnel.service; then
+                echo "TrustTunnel failed to start. The ttui panel is still running. Check journalctl -u trusttunnel.service." >&2
+                exit 1
+            fi
+        else
+            echo "The VPN endpoint is not configured. Open Server in the ttui panel to complete setup."
         fi
     fi
     for unit in "${active[@]}"; do
@@ -276,10 +302,6 @@ main() {
     ln -sfn "$panel/install.sh" "$launcher"
     )
     echo "ttui $target installed."
-    if (( ! updating )); then
-        echo "Default panel address: http://127.0.0.1:8080/ttui/"
-        echo "Remote access: ssh -L 8080:127.0.0.1:8080 USER@SERVER"
-    fi
 }
 
 main "$@"
