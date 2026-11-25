@@ -1,7 +1,9 @@
 """Exercise the installed panel using a real browser; the installer log is private."""
 import re
+import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -23,6 +25,33 @@ with sync_playwright() as playwright:
     page.get_by_text("browser-test", exact=True).first.click()
     page.get_by_role("button", name="Export", exact=True).first.click()
     expect(page.locator("#export-value")).to_have_value(re.compile(r"^tt://\?"))
+    page.goto(base + "/endpoint")
+    page.get_by_label("TCP idle", exact=True).fill("604799")
+    page.get_by_role("button", name="Preview changes").click()
+    expect(page.get_by_label("Configuration diff")).to_have_value(re.compile("604799"))
+    page.get_by_role("button", name="Apply and restart").click()
+    expect(page.get_by_text("TrustTunnel settings applied.")).to_be_visible()
+    page.goto(base + "/tls")
+    with TemporaryDirectory() as directory:
+        cert, key = Path(directory) / "cert.pem", Path(directory) / "key.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+                        "-subj", "/CN=browser.example", "-addext", "subjectAltName=DNS:browser.example",
+                        "-out", str(cert), "-keyout", str(key)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        add_host = page.locator("section").filter(has=page.get_by_role("heading", name="Add TLS host"))
+        add_host.get_by_label("Hostname").fill("browser.example")
+        add_host.get_by_label("Purpose").select_option("ping_hosts")
+        add_host.get_by_text("Upload certificate and private key").click()
+        add_host.get_by_label("Certificate chain (PEM)").set_input_files(str(cert))
+        add_host.get_by_label("Private key (PEM)").set_input_files(str(key))
+        add_host.get_by_role("button", name="Add host").click()
+    expect(page.get_by_text("TLS hosts updated.")).to_be_visible()
+    expect(page.get_by_text("browser.example", exact=False).first).to_be_visible()
+    add_host = page.locator("section").filter(has=page.get_by_role("heading", name="Add TLS host"))
+    add_host.get_by_label("Hostname").fill("smoke.example")
+    add_host.get_by_label("Purpose").select_option("ping_hosts")
+    add_host.get_by_role("button", name="Add host").click()
+    expect(page.get_by_text("This hostname already exists in another TLS host entry.")).to_be_visible()
     page.goto(base + "/routing")
     page.get_by_role("button", name="Add outbound").click()
     page.get_by_label("Outbound name").fill("browser-proxy")
