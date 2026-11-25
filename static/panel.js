@@ -1,7 +1,7 @@
 "use strict";
 
 document.addEventListener("submit", (event) => {
-  const message = event.target.dataset.confirm;
+  const message = event.submitter?.dataset.confirmButton || event.target.dataset.confirm;
   if (message && !window.confirm(message)) event.preventDefault();
 });
 

@@ -16,10 +16,30 @@
 </section>
 <section class="card client-list">
   <h2>Connections <span class="count">{{ clients|length }}</span></h2>
+  <form class="row" method="get" action="{{ url_for('index') }}">
+    <label>Search clients <input name="q" value="{{ query }}" placeholder="Username, group, device, or notes"></label>
+    <label>Status <select name="status" aria-label="Status">
+      {% for value, label in [('', 'All'), ('enabled', 'Enabled'), ('disabled', 'Disabled')] %}
+      <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+    <button>Filter</button>
+  </form>
+  {% if clients %}
+  <form id="bulk-clients" class="actions separate" method="post" action="{{ url_for('update_client') }}">
+    {{ token() }}
+    <button name="operation" value="bulk-enable">Enable selected</button>
+    <button name="operation" value="bulk-disable">Disable selected</button>
+    <button class="danger" name="operation" value="bulk-delete" data-confirm-button="Delete the selected clients and revoke access?">Delete selected</button>
+  </form>
+  {% endif %}
   {% for client in clients %}
   <details>
-    <summary><span>{{ client.username }}</span><span class="subtle">Actions</span></summary>
+    <summary><span>{{ client.username }}</span><span class="subtle">{{ 'Enabled' if client.enabled else 'Disabled' }}{% if client.group %} · {{ client.group }}{% endif %}</span></summary>
     <div class="details-body">
+      <label class="check"><input name="selected" value="{{ client.username }}" type="checkbox" form="bulk-clients"> Select {{ client.username }}</label>
+      {% if client.created %}<p class="subtle">Created {{ client.created }}</p>{% endif %}
+      {% if client.enabled %}
       <form class="stack" method="post" action="{{ url_for('export') }}">
         {{ token() }}<input type="hidden" name="username" value="{{ client.username }}">
         <div class="row">
@@ -40,12 +60,42 @@
           </div>
         </details>
       </form>
+      {% endif %}
+      <details class="separate">
+        <summary>Edit client</summary>
+        <form class="details-body stack" method="post" action="{{ url_for('update_client') }}">
+          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}">
+          <div class="grid">
+            <label>Client username <input name="new_username" value="{{ client.username }}" maxlength="64" required></label>
+            <label>Group <input name="group" value="{{ client.group }}" maxlength="64"></label>
+            <label>Device <input name="device" value="{{ client.device }}" maxlength="128"></label>
+          </div>
+          <label>Notes <textarea name="notes" maxlength="1000" rows="2">{{ client.notes }}</textarea></label>
+          <div><button name="operation" value="edit">Save client</button></div>
+        </form>
+      </details>
+      {% if client.history %}
+      <details class="separate">
+        <summary>Recent changes</summary>
+        <ul>
+          {% for event in client.history %}
+          <li>{{ {'create': 'Created', 'edit': 'Edited', 'rotate': 'Password rotated', 'disable': 'Disabled', 'enable': 'Enabled'}.get(event.action, event.action) }}
+            <time datetime="{{ event.at }}">{{ event.at }}</time></li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
       <div class="actions separate">
+        {% set keep_enabled = client.enabled and enabled_count <= 1 and not can_remove_last %}
+        <form method="post" action="{{ url_for('update_client') }}">
+          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}">
+          <button name="operation" value="{{ 'disable' if client.enabled else 'enable' }}" {% if keep_enabled %}disabled title="Keep at least one enabled client"{% endif %}>{{ 'Disable' if client.enabled else 'Enable' }}</button>
+        </form>
         <form method="post" action="{{ url_for('update_client') }}" data-confirm="Rotate the client password? Existing links will lose access.">
           {{ token() }}<input type="hidden" name="username" value="{{ client.username }}"><button name="operation" value="rotate">Rotate password</button>
         </form>
         <form method="post" action="{{ url_for('update_client') }}" data-confirm="Delete this client and revoke access?">
-          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}"><button class="danger" name="operation" value="delete" {% if clients|length <= 1 and not can_remove_last %}disabled title="Keep at least one client"{% endif %}>Delete</button>
+          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}"><button class="danger" name="operation" value="delete" {% if keep_enabled %}disabled title="Keep at least one enabled client"{% endif %}>Delete</button>
         </form>
       </div>
     </div>

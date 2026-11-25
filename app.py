@@ -16,6 +16,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import tomlkit
+import qrcode
+from qrcode.exceptions import DataOverflowError
+from qrcode.image.svg import SvgPathFillImage
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
 from flask.sessions import SecureCookieSessionInterface
 from tomlkit.exceptions import ParseError
@@ -24,6 +27,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
 import endpoint_settings as endpoint_form
+from client_manager import ClientManager
 from auth import clear_attempts, reserve_attempt
 from monitoring import host_metrics
 
@@ -229,57 +233,44 @@ def dashboard():
 
 @app.get("/clients")
 def index():
+    query = request.args.get("q", "").strip()
+    status = request.args.get("status", "")
     with b.LOCK:
         try:
             vpn = read_vpn()
-            entries = b.configured_clients(vpn)
+            manager = ClientManager(vpn)
+            entries = manager.visible(query.casefold(), status)
+            enabled_count = sum(row["enabled"] for row in manager.visible())
             hosts = host_groups(b.read(b.HOSTS, "")).get("main_hosts", [])
             address = request_settings().get("address") or (hosts[0].get("hostname", "") if hosts else "")
             initialized = bool(vpn.get("listen_address") and hosts)
             can_remove_last = b.loopback(vpn)
-        except (ParseError, ValueError, OSError):
-            entries, address, initialized, can_remove_last = [], "", False, False
+        except OPERATION_ERRORS:
+            entries, enabled_count, address, initialized, can_remove_last = [], 0, "", False, False
     return render_template("clients.html", clients=entries, address=address, initialized=initialized,
-                           can_remove_last=can_remove_last, endpoint=b.service_state(b.ENDPOINT_UNIT))
+                           enabled_count=enabled_count, can_remove_last=can_remove_last,
+                           query=query, status=status, endpoint=b.service_state(b.ENDPOINT_UNIT))
 
 
 @app.post("/clients")
 @action("index")
 def update_client():
-    vpn = read_vpn()
-    credentials, _ = b.related(vpn)
-    doc = tomlkit.parse(b.read(credentials, ""))
-    entries = b.clients(doc)
-    name = request.form.get("username", "").strip()
-    operation = request.form.get("operation")
-    if not vpn.get("credentials_file"):
-        if operation != "create":
-            raise ValueError("The client credentials file is disabled.")
-        if entries:
-            raise ValueError("Select the existing client credentials file in Server settings.")
-    existing = next((entry for entry in entries if entry["username"] == name), None)
-    password = None
-    if operation in ("create", "rotate"):
-        password = request.form.get("password") or secrets.token_urlsafe(24)
-        if len(password) > 512 or any(ord(c) < 32 for c in password):
-            raise ValueError("The password is too long or contains control characters.")
-    if operation == "create":
-        if existing or not re.fullmatch(r"[^\s\x00-\x1f:]{1,64}", name):
-            raise ValueError("Enter a unique username of up to 64 characters, with no spaces or colons.")
-        if "client" not in doc:
-            doc["client"] = tomlkit.aot()
-        doc["client"].append({"username": name, "password": password})
-    elif operation == "rotate" and existing is not None:
-        existing["password"] = password
-    elif operation == "delete" and existing is not None:
-        entries.remove(existing)
-    else:
-        raise ValueError("Client not found.")
-    changes = {credentials: tomlkit.dumps(doc)}
-    if not vpn.get("credentials_file"):
-        vpn["credentials_file"] = str(credentials.relative_to(b.CONFIG))
-        changes[b.VPN] = tomlkit.dumps(vpn)
-    b.apply_endpoint(changes, vpn)
+    manager = ClientManager(read_vpn())
+    operation = request.form.get("operation", "")
+    if not manager.vpn.get("credentials_file") and manager.entries:
+        raise ValueError("Select the existing client credentials file in Server settings.")
+    names = list(dict.fromkeys(request.form.getlist("selected"))) if operation.startswith("bulk-") else [
+        request.form.get("username", "").strip()
+    ]
+    operation = operation.removeprefix("bulk-")
+    if not names:
+        raise ValueError("Select at least one client.")
+    if len(names) > 1 and operation not in ("enable", "disable", "delete"):
+        raise ValueError("Unknown bulk operation.")
+    before = tomlkit.dumps(manager.document)
+    for name in names:
+        manager.change(name, operation, request.form)
+    manager.save(before)
     return saved("index", "Clients updated.")
 
 
@@ -289,8 +280,15 @@ def export():
     name = request.form.get("username", "")
     if not any(entry["username"] == name for entry in b.configured_clients(read_vpn())):
         raise ValueError("Client not found.")
-    return render_template("export.html", username=name, content=b.export_client(name, request.form),
-                           fmt=request.form.get("format"))
+    content = b.export_client(name, request.form)
+    fmt = request.form.get("format", "deeplink")
+    qr_svg = None
+    if fmt == "deeplink":
+        try:
+            qr_svg = qrcode.make(content, image_factory=SvgPathFillImage).to_string(encoding="unicode")
+        except DataOverflowError:
+            pass
+    return render_template("export.html", username=name, content=content, fmt=fmt, qr_svg=qr_svg)
 
 
 def render_server(source, version, error=None):
@@ -505,7 +503,7 @@ def clean_path(value):
     if value == "/":
         return ""
     if not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
-        raise ValueError("The path must start with / and contain only letters AвЂ“Z, digits, underscores, hyphens, and slash separators.")
+        raise ValueError("The path must start with / and contain only letters AРІР‚вЂњZ, digits, underscores, hyphens, and slash separators.")
     return value
 
 
@@ -518,7 +516,7 @@ def save_settings():
     username = form.get("username", "").strip()
     password = form.get("password", "")
     if not username or len(username) > 64 or (password and not 12 <= len(password) <= 256):
-        raise ValueError("Enter a username of up to 64 characters and a new password of 12вЂ“256 characters.")
+        raise ValueError("Enter a username of up to 64 characters and a new password of 12РІР‚вЂњ256 characters.")
     if not check_password_hash(config["password_hash"], form.get("current_password", "")):
         raise ValueError("Enter the current password.")
     old_path = config["path"]

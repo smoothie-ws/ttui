@@ -3,6 +3,14 @@
 {% block content %}
 {{ heading('Connection for ' ~ username, 'This contains the client password. Share it through a secure channel.') }}
 <section class="card stack">
+  {% if qr_svg %}
+  <details>
+    <summary>Show connection QR code</summary>
+    <figure class="connection-qr" aria-label="QR code containing the connection link">{{ qr_svg|safe }}</figure>
+  </details>
+  {% elif fmt == 'deeplink' %}
+  <p class="subtle">This connection link is too long for a QR code. Copy or download it below.</p>
+  {% endif %}
   <label>{{ 'TOML configuration' if fmt == 'toml' else 'tt:// link' }}
     <textarea id="export-value" class="code" rows="{{ 14 if fmt == 'toml' else 4 }}" readonly spellcheck="false">{{ content }}</textarea>
   </label>

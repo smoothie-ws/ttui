@@ -9,10 +9,45 @@ import tomlkit
 import app as panel
 import backend as b
 import endpoint_settings
+from client_manager import ClientManager
 from routing import DEFAULT_ROUTING, ROUTER_ADDRESS
 
 
 class ConfigTest(unittest.TestCase):
+    def test_client_lifecycle_keeps_disabled_credentials_off_endpoint(self):
+        vpn = tomlkit.parse('listen_address = "0.0.0.0:443"\ncredentials_file = "clients.toml"\n')
+        credentials, _ = b.related(vpn)
+        credentials.write_text('[[client]]\nusername = "keeper"\npassword = "present"\n'
+                               '[[client]]\nusername = "laptop"\npassword = "old-secret"\n', encoding="utf-8")
+
+        def apply(operations):
+            manager = ClientManager(vpn)
+            before = tomlkit.dumps(manager.document)
+            for name, action, fields in operations:
+                manager.change(name, action, fields)
+            manager.save(before)
+
+        apply([("laptop", "disable", {})])
+        self.assertNotIn("old-secret", b.read(credentials))
+        self.assertEqual(self.service.call_count, 1)
+        apply([("laptop", "edit", {"new_username": "tablet", "group": "Office"}),
+               ("tablet", "rotate", {"password": "new-secret"})])
+        self.assertEqual(self.service.call_count, 1)
+        self.assertNotIn("new-secret", b.read(credentials))
+        row, = ClientManager(vpn).visible("office", "disabled")
+        self.assertEqual(row["username"], "tablet")
+        self.assertNotIn("new-secret", str(row))
+        self.assertEqual([event["action"] for event in row["history"]], ["rotate", "edit", "disable"])
+        apply([("tablet", "enable", {})])
+        self.assertEqual([entry["username"] for entry in b.configured_clients(vpn)], ["keeper", "tablet"])
+        self.assertIn("new-secret", b.read(credentials))
+        self.assertEqual(self.service.call_count, 2)
+        original = b.read(credentials)
+        with self.assertRaisesRegex(ValueError, "at least one client"):
+            apply([("keeper", "disable", {}), ("tablet", "disable", {})])
+        self.assertEqual(b.read(credentials), original)
+        self.assertFalse(ClientManager(vpn).visible(status="disabled"))
+
     def test_endpoint_form_preserves_native_settings_outside_form(self):
         vpn = tomlkit.parse('listen_address = "0.0.0.0:443"\n[listen_protocols.http2]\nmax_frame_size = 20000\n[metrics]\naddress = "127.0.0.1:1987"\n')
         fields = {"bind": "::", "port": "8443", "http2": "on", "quic": "on"}
