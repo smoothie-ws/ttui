@@ -6,6 +6,14 @@ A minimal web panel for a single TrustTunnel Endpoint. Manage clients, export `t
 
 Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64.
 
+### Install the latest release
+
+Replace `panel.example.com` with the panel's DNS hostname:
+
+```bash
+curl -fsSL https://github.com/trusttunnel-ui/ttui-panel/releases/latest/download/bootstrap.sh | sudo bash -s -- --domain panel.example.com
+```
+
 ### Browser-first setup from a working tree
 
 ```bash
@@ -39,13 +47,7 @@ In **Settings**, set up a TOTP authenticator, choose an optional IP allowlist, o
 
 If you lose the authenticator or the allowlist blocks your address, use the password reset command from the server console. Add `--clear-totp`, `--clear-allowlist`, or both to clear the affected settings. Backups containing panel settings also contain the authenticator secret.
 
-### Published releases
-
-The stable installer verifies the release archive's SHA-256 checksum. To install `v0.1.0`, use `--panel-only` to skip the terminal wizard. That release uses SSH access and offers manual TOML configuration under **Server**. Browser-first setup requires a newer build.
-
-```bash
-curl -fsSL https://github.com/trusttunnel-ui/ttui-panel/releases/download/v0.1.0/bootstrap.sh | sudo bash -s -- --version v0.1.0 --panel-only
-```
+The installer verifies the release archive's SHA-256 checksum before installing it.
 
 ## Updates
 
@@ -54,7 +56,7 @@ Open **Updates** to check the latest stable GitHub release, read its notes, comp
 ```bash
 ttui version
 sudo ttui update
-sudo ttui update --version v0.1.0
+sudo ttui update --version v0.2.0
 ```
 
 The installer selects the latest stable GitHub release by default. It preserves `/etc/trusttunnel`, `/var/lib/ttui`, systemd drop-in files, and `/etc/default/ttui`. It restarts active services, which can briefly interrupt VPN connections. If the update fails, the installer restores the previous application files and attempts to restart the services. Add `--allow-downgrade` to install an older release explicitly. When switching between versions with different configuration formats, restore a compatible backup.
@@ -74,8 +76,8 @@ Under **Automatic backups**, choose a daily or weekly schedule and the component
 Work takes place on the `dev` branch. GitHub Actions runs on pushes to `dev` and `main`, and on pull requests. CI checks Python, JavaScript, and Bash, then tests installation, updates, and rollback on Linux. To prepare a stable release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md) on `dev`. After the changes pass review and CI, push the matching SemVer tag from a commit in the history of `dev`.
 
 ```bash
-git tag -a v0.1.0 -m "ttui v0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 -m "ttui v0.2.0"
+git push origin v0.2.0
 ```
 
 The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, bootstrap script, and compatibility metadata. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/trusttunnel-ui/ttui-panel/releases).

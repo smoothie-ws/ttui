@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.0
+
+- Install the web panel with managed HTTPS and initial administrator credentials; configure TrustTunnel in the browser without its terminal wizard.
+- Back up and restore managed Certbot configuration and custom geodata, with recovery if a service fails to start.
+- Exercise clean installation, VPN routing, recovery, and upgrades from v0.1.0 in Linux CI.
 - Set native per-client connection limits, view live counters from loopback Endpoint metrics, and navigate long client lists by page.
 - Configure native HTTP and QUIC settings, limits, forwarding, metrics, ICMP, subscriptions, and inbound connection filters through forms. Save a backup before applying a reviewed change.
 - Protect administrator sign-in with an optional TOTP authenticator and IP allowlist. Review administrative actions from the settings page.
