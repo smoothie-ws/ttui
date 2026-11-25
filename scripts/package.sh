@@ -11,6 +11,7 @@ mkdir -p dist
 tar -czf dist/ttui.tar.gz VERSION install.sh ./*.py requirements.txt \
     templates static systemd docs README.md LICENSE CHANGELOG.md
 cp install.sh dist/bootstrap.sh
+bash install.sh --release-info >dist/release-info.json
 (
     cd dist
     sha256sum --binary ttui.tar.gz > ttui.tar.gz.sha256

@@ -26,7 +26,8 @@ smoke() {
 }
 snapshot() {
     sudo sha256sum /var/lib/ttui/panel.json /var/lib/ttui/routing.json \
-        /var/lib/ttui/geo/geosite.dat /etc/trusttunnel/{vpn,hosts,credentials}.toml
+        /var/lib/ttui/geo/geosite.dat /etc/trusttunnel/{vpn,hosts,credentials}.toml \
+        /etc/systemd/system/ttui.service
 }
 install_panel --local
 grep -q '^Default sign-in URL: http://127.0.0.1:8080/ttui/$' "$work/install.log"
@@ -66,6 +67,8 @@ def submit(path, page, **fields):
 
 submit("/login", get("/login"), username="admin", password=password)
 assert "Not configured" in get("/")
+assert "TrustTunnel Endpoint" in get("/updates")
+assert "The systemd updater is unavailable" not in get("/updates")
 assert 'data-chart="usage"' in get("/monitoring")
 assert "The service journal is unavailable" not in get("/logs")
 assert "Accepting connections on 127.0.0.1:8080." in submit("/diagnostics", get("/diagnostics"))
@@ -99,6 +102,17 @@ sudo -u ttui sed -i -E 's/("next": )"[^"]+"/\1"2000-01-01T00:00:00+00:00"/' /var
 sudo systemctl start ttui-backups.service
 sudo grep -Fq -- '-auto.zip' /var/lib/ttui/backup-schedule.json
 sudo systemctl is-active --quiet trusttunnel.service
+printf 'v0.0.0\n' | sudo -u ttui tee /var/lib/ttui/update-request >/dev/null
+sudo -u ttui sudo -n /usr/bin/systemctl start --no-block ttui-update.service
+for _ in {1..20}; do
+    if systemctl is-failed --quiet ttui-update.service; then break; fi
+    sleep 0.25
+done
+systemctl is-failed --quiet ttui-update.service
+sudo -u ttui sudo -n /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui-update.service \
+    | grep -F 'The requested release is already installed or older.' >/dev/null
+sudo -u ttui rm -f /var/lib/ttui/update-request
+sudo systemctl reset-failed ttui-update.service
 for config in vpn hosts credentials; do
     sudo test -s "/etc/trusttunnel/$config.toml"
 done
@@ -117,8 +131,9 @@ smoke
 sudo systemctl is-active --quiet trusttunnel.service
 snapshot | diff - "$work/before"
 
-# A broken panel must trigger runtime rollback, including service definitions.
-sed -i 's|^ExecStart=.*|ExecStart=/bin/false|' "$work/source/systemd/ttui.service"
+# A live process serving a broken sign-in page must still trigger rollback.
+sed -i '/{{ token() }}/d' "$work/source/templates/login.html"
+sed -i 's/^Description=.*/Description=ttui test candidate/' "$work/source/systemd/ttui.service"
 echo "${version%.*}.$((patch_version + 2))" >"$work/source/VERSION"
 if install_panel; then
     echo "Invalid upgrade unexpectedly succeeded." >&2

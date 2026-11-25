@@ -45,6 +45,8 @@ curl -fsSL https://github.com/smoothie-ws/ttui/releases/download/v0.1.0/bootstra
 
 ## Updates
 
+Open **Updates** to check the latest stable GitHub release, read its notes, compare bundled component versions, and install a compatible release. The panel asks for the current administrator password before queuing the update. A systemd service continues the install while the panel restarts. Follow the result under **Update log**. The release bundle pins the Endpoint, Client, and Xray versions tested together.
+
 ```bash
 ttui version
 sudo ttui update
@@ -72,7 +74,7 @@ git tag -a v0.1.0 -m "ttui v0.1.0"
 git push origin v0.1.0
 ```
 
-The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, and bootstrap script. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/smoothie-ws/ttui/releases).
+The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, bootstrap script, and compatibility metadata. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/smoothie-ws/ttui/releases).
 
 ## Server and clients
 

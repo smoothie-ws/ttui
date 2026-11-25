@@ -8,7 +8,45 @@ units=/etc/systemd/system
 sudoers=/etc/sudoers.d/ttui
 launcher=/usr/local/bin/ttui
 managed_units=(ttui.service trusttunnel.service ttui-router.service)
-support_units=(ttui-acme.service ttui-acme.timer ttui-metrics.service ttui-metrics.timer ttui-backups.service ttui-backups.timer)
+support_units=(ttui-acme.service ttui-acme.timer ttui-metrics.service ttui-metrics.timer ttui-backups.service ttui-backups.timer ttui-update.service)
+endpoint_tag=v1.3.1
+client_tag=v1.3.0
+xray_tag=v26.11.9
+semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+
+release_info() {
+    local version
+    version=$(cat "$1/VERSION")
+    [[ $version =~ ^$semver$ ]]
+    cat <<EOF
+{"format":1,"version":"$version","components":{"endpoint":"$endpoint_tag","client":"$client_tag","xray":"$xray_tag"},"systems":["debian","ubuntu"],"architectures":["x86_64","aarch64"],"minimum_python":[3,9]}
+EOF
+}
+
+start_queued_update() {
+    local version installed
+    version=$(runuser -u ttui -- /usr/bin/python3 -I -c '
+import os, stat, sys
+
+with os.fdopen(os.open("/var/lib/ttui/update-request", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as request:
+    if not stat.S_ISREG(os.fstat(request.fileno()).st_mode):
+        sys.exit("Skip an invalid update request file.")
+    version = request.read(65)
+    if len(version) > 64:
+        sys.exit("Skip an oversized update request.")
+    sys.stdout.write(version.decode("ascii"))
+')
+    if [[ ! $version =~ ^v$semver$ ]]; then
+        echo "Invalid update request version." >&2
+        return 1
+    fi
+    installed=$(cat "$panel/VERSION")
+    if ! dpkg --compare-versions "${version#v}" gt "$installed"; then
+        echo "The requested release is already installed or older." >&2
+        return 1
+    fi
+    main update --version "$version" --newer-only
+}
 
 check_public_domain() {
     local domain=$1 label='[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
@@ -67,7 +105,7 @@ fetch_release() (
     shift
     if [[ $version == latest ]]; then
         base="$repository/releases/latest/download"
-    elif [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    elif [[ $version =~ ^v$semver$ ]]; then
         base="$repository/releases/download/$version"
     else
         echo "Expected latest or a release such as v0.1.0." >&2
@@ -182,14 +220,22 @@ finish_update() {
 }
 
 main() {
-    local source_dir='' version=latest allow_downgrade=0 updating=0 target current=unknown
+    local source_dir='' version=latest allow_downgrade=0 newer_only=0 updating=0 target current=unknown
     local domain='' access='' adding_https=0
     local -a packages=(ca-certificates curl openssl python3 python3-venv sudo unzip util-linux)
     local architecture xray_arch endpoint_sha client_sha xray_sha
     local config=/etc/trusttunnel state=/var/lib/ttui
-    local endpoint_tag=v1.3.1 client_tag=v1.3.0 xray_tag=v26.11.9
     local -a forwarded=() active=()
     local unit file directory credentials
+    if [[ $# == 1 && $1 == --release-info ]]; then
+        release_info "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+        return
+    fi
+    if [[ $# == 1 && $1 == --queued-update ]]; then
+        if [[ $EUID != 0 ]]; then echo "Run as root." >&2; return 1; fi
+        start_queued_update
+        return
+    fi
     if [[ ${1:-} == version || ( $# == 1 && ${1:-} == --version ) ]]; then
         if [[ -r $panel/VERSION ]]; then cat "$panel/VERSION"; else echo "ttui version unavailable." >&2; return 1; fi
         return
@@ -203,6 +249,7 @@ main() {
             --local|--panel-only) access=local; forwarded+=(--local) ;;
             --external-proxy) access=external; forwarded+=(--external-proxy) ;;
             --allow-downgrade) allow_downgrade=1; forwarded+=(--allow-downgrade) ;;
+            --newer-only) newer_only=1; forwarded+=(--newer-only) ;;
             *) echo "Usage: ttui [update] [--version vX.Y.Z | --source DIR] [--domain HOST | --local | --external-proxy] [--allow-downgrade]" >&2; return 2 ;;
         esac
         shift
@@ -220,7 +267,7 @@ main() {
     exec 9>/run/lock/ttui-install.lock
     flock -n 9 || { echo "Another ttui installation is in progress." >&2; return 1; }
     target=$(cat "$source_dir/VERSION")
-    [[ $target =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+    [[ $target =~ ^$semver$ ]] || {
         echo "Invalid VERSION file." >&2; return 1;
     }
     echo "Installing ttui $target (web panel and TrustTunnel tools)."
@@ -228,11 +275,19 @@ main() {
         updating=1
         if [[ -f $panel/VERSION ]]; then
             current=$(cat "$panel/VERSION")
+            if (( newer_only )) && ! dpkg --compare-versions "$target" gt "$current"; then
+                echo "The requested release is already installed or older." >&2
+                return 1
+            fi
             if (( ! allow_downgrade )) && dpkg --compare-versions "$target" lt "$current"; then
                 echo "Downgrade from $current to $target requires --allow-downgrade." >&2
                 return 1
             fi
         fi
+    fi
+    if (( newer_only && ! updating )); then
+        echo "An existing ttui installation is required." >&2
+        return 1
     fi
     if [[ -n $domain && -n $access ]]; then
         echo "Choose one panel access mode." >&2; return 2
@@ -339,6 +394,7 @@ main() {
     done
     install -m 0644 "$source_dir/"*.py "$source_dir/"{requirements.txt,VERSION} "$panel/"
     install -m 0755 "$source_dir/install.sh" "$panel/install.sh"
+    release_info "$source_dir" >"$panel/release-info.json"
     install -m 0644 "$source_dir"/templates/*.html "$panel/templates/"
     install -m 0644 "$source_dir"/static/* "$panel/static/"
     python3 -m venv "$panel/venv"

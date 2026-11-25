@@ -1,0 +1,9 @@
+# Managed by ttui
+[Unit]
+Description=Install an official ttui release
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ttui --queued-update
+TimeoutStartSec=20min
+UMask=0077

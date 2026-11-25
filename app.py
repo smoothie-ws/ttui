@@ -12,6 +12,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from http.client import HTTPConnection, HTTPException
 from ipaddress import ip_address
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -34,6 +35,7 @@ import certificates as tls
 import diagnostics as system_diagnostics
 import endpoint_settings as endpoint_form
 import service_logs
+import updates as updater
 from client_manager import ClientManager
 from auth import clear_attempts, reserve_attempt
 from monitoring import PERIODS, collect_sample, history, host_metrics
@@ -159,6 +161,30 @@ def action(page):
 def saved(page, message):
     flash(message)
     return redirect(url_for(page))
+
+
+def panel_bind():
+    host = "127.0.0.1" if PUBLIC_HTTPS else os.environ.get("TTUI_BIND", "127.0.0.1")
+    return host, int(os.environ.get("TTUI_PORT", "8080"))
+
+
+def verify_panel_http():
+    host, port = panel_bind()
+    host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
+    path = settings()["path"] + "/login"
+    for _ in range(12):
+        connection = HTTPConnection(host, port, timeout=1)
+        try:
+            connection.request("GET", path)
+            response = connection.getresponse()
+            if response.status == 200 and b'name="csrf"' in response.read(65536):
+                return
+        except (OSError, HTTPException):
+            pass
+        finally:
+            connection.close()
+        time.sleep(0.5)
+    raise RuntimeError("The panel sign-in page did not respond on its configured address.")
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -360,6 +386,30 @@ def download_backup(name):
     except (ValueError, OSError):
         abort(404)
     return send_file(path, mimetype="application/zip", as_attachment=True, max_age=0)
+
+
+@app.route("/updates", methods=["GET", "POST"])
+@action("updates")
+def updates():
+    release = None
+    if request.method == "POST":
+        operation = request.form.get("operation")
+        if operation == "check":
+            release = updater.latest(VERSION)
+        elif operation == "install":
+            if not check_password_hash(request_settings()["password_hash"], request.form.get("current_password", "")):
+                raise ValueError("Enter your current administrator password.")
+            release = updater.latest(VERSION)
+            if not release["compatible"]:
+                raise ValueError(release["problem"])
+            if release["tag"] != request.form.get("tag"):
+                raise ValueError("The latest release changed. Check the release notes again before installing.")
+            updater.queue(release["tag"])
+            return saved("updates", "Update requested. The panel may disconnect briefly while it restarts.")
+        else:
+            raise ValueError("Unknown update operation.")
+    return render_template("updates.html", version=VERSION, release=release, update=updater.status(),
+                           installed=updater.installed_components(VERSION), names=updater.COMPONENTS)
 
 
 @app.post("/clients")
@@ -725,6 +775,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--init", action="store_true")
     mode.add_argument("--panel-info", action="store_true")
+    mode.add_argument("--verify-panel-http", action="store_true")
     mode.add_argument("--reset-login", action="store_true")
     mode.add_argument("--run-endpoint", action="store_true")
     mode.add_argument("--routing-enabled", action="store_true")
@@ -750,6 +801,9 @@ def main():
         print(f"Panel path: {config['path'] or '/'}")
         print(f"Administrator username: {config['username']}")
         return
+    if args.verify_panel_http:
+        verify_panel_http()
+        return
     if args.routing_enabled:
         raise SystemExit(0 if b.load_routing()["enabled"] else 1)
     if args.run_endpoint:
@@ -772,10 +826,10 @@ def main():
         return
     app.secret_key = settings()["secret"]
     app.logger.setLevel(logging.INFO)
-    host = "127.0.0.1" if PUBLIC_HTTPS else os.environ.get("TTUI_BIND", "127.0.0.1")
+    host, port = panel_bind()
     proxy = {"trusted_proxy": "127.0.0.1",
              "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto"}} if PUBLIC_HTTPS else {}
-    serve(app, host=host, port=int(os.environ.get("TTUI_PORT", "8080")),
+    serve(app, host=host, port=port,
           threads=4, max_request_body_size=app.config["MAX_CONTENT_LENGTH"], **proxy)
 
 

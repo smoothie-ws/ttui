@@ -57,5 +57,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" --verify-tag --generate-notes \
-            dist/ttui.tar.gz dist/ttui.tar.gz.sha256 dist/bootstrap.sh
+          notes_file="$RUNNER_TEMP/ttui-release-notes.md"
+          awk -v heading="## ${RELEASE_TAG#v}" '
+            $0 == heading { active = 1; next }
+            active && /^## / { exit }
+            active { print }
+          ' CHANGELOG.md > "$notes_file"
+          notes=(--generate-notes)
+          if grep -q '[^[:space:]]' "$notes_file"; then notes=(--notes-file "$notes_file"); fi
+          gh release create "$RELEASE_TAG" --verify-tag "${notes[@]}" \
+            dist/ttui.tar.gz dist/ttui.tar.gz.sha256 dist/bootstrap.sh dist/release-info.json

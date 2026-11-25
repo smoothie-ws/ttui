@@ -27,3 +27,19 @@ document.addEventListener("click", async (event) => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(file), 1000);
 });
+
+if (document.querySelector("[data-update-running]")) {
+  const waitForUpdate = async () => {
+    try {
+      const response = await fetch(location.href, {cache: "no-store"});
+      if (response.ok && !new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-update-running]")) {
+        location.replace(location.href);
+        return;
+      }
+    } catch {
+      // Wait through the panel restart.
+    }
+    setTimeout(waitForUpdate, 4000);
+  };
+  setTimeout(waitForUpdate, 4000);
+}

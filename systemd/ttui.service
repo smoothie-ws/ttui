@@ -11,6 +11,7 @@ WorkingDirectory=/opt/ttui
 Environment=TTUI_STATE=/var/lib/ttui
 EnvironmentFile=-/etc/default/ttui
 ExecStart=/opt/ttui/venv/bin/python /opt/ttui/app.py
+ExecStartPost=/opt/ttui/venv/bin/python /opt/ttui/app.py --verify-panel-http
 Restart=on-failure
 RestartSec=3
 UMask=0077

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Updates{% endblock %}
+{% block content %}
+{{ heading('Updates', 'Check official ttui releases and install a compatible bundle.') }}
+<section class="card stack">
+  <dl>
+    <dt>Component</dt><dd>Installed{% if release %} → Available{% endif %}</dd>
+    <dt>ttui</dt><dd>v{{ version }}{% if release %} → {{ release.tag }}{% endif %}</dd>
+    {% for key, name in names.items() %}
+    <dt>{{ name }}</dt><dd>{{ installed.get(key, 'Unavailable') }}{% if release and release.components %} → {{ release.components[key] }}{% endif %}</dd>
+    {% endfor %}
+  </dl>
+  {% if not update.available %}
+  <p class="notice">The systemd updater is unavailable on this installation.</p>
+  {% elif update.busy %}
+  <p class="notice" data-update-running role="status">The installation of {{ update.tag or 'the requested release' }} is running.</p>
+  {% elif update.failed %}
+  <p class="notice error" role="status">The updater reported an error. Check the update log for the result and any recovery details.</p>
+  {% elif update.tag == 'v' ~ version %}
+  <p class="notice" role="status">{{ update.tag }} is installed.</p>
+  {% elif update.tag %}
+  <p class="notice" role="status">The last request for {{ update.tag }} is no longer running. Check the update log before retrying.</p>
+  {% endif %}
+  <div class="row">
+    <form method="post">{{ token() }}<button name="operation" value="check">Check for updates</button></form>
+    <a class="button" href="{{ url_for('logs', source='updates') }}">Update log</a>
+  </div>
+</section>
+{% if release %}
+<section class="card stack">
+  <h2>{{ release.tag }} release notes</h2>
+  {% if release.problem %}<p class="notice">{{ release.problem }}</p>{% endif %}
+  {% if release.notes %}<pre>{{ release.notes }}</pre>{% endif %}
+  <div><a href="{{ release.url }}">View release on GitHub</a></div>
+  {% if release.compatible and update.available and not update.busy %}
+  <form method="post" class="stack">
+    {{ token() }}
+    <input type="hidden" name="tag" value="{{ release.tag }}">
+    <p>ttui saves a configuration backup before installing. Active services may restart.</p>
+    <label>Current administrator password <input type="password" name="current_password" autocomplete="current-password" required></label>
+    <div><button class="primary" name="operation" value="install">Install {{ release.tag }}</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
