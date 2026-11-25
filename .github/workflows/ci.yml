@@ -43,3 +43,12 @@ jobs:
           persist-credentials: false
       - run: bash scripts/package.sh
       - run: bash scripts/smoke-install.sh
+  upgrade-from-stable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the published release and upgrade
+        run: bash scripts/smoke-upgrade-v0.1.sh
