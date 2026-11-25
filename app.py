@@ -142,16 +142,16 @@ def action(page):
     def decorate(function):
         @wraps(function)
         def wrapped(*args, **kwargs):
-            with b.LOCK:
-                if request.method == "POST" and "ttui.settings" in request.environ:
-                    request.environ["ttui.settings"] = config = settings()
-                    if not authenticated(config):
-                        return redirect(config["path"] + "/login")
-                try:
+            try:
+                with (b.configuration_change() if request.method == "POST" else b.LOCK):
+                    if request.method == "POST" and "ttui.settings" in request.environ:
+                        request.environ["ttui.settings"] = config = settings()
+                        if not authenticated(config):
+                            return redirect(config["path"] + "/login")
                     return function(*args, **kwargs)
-                except OPERATION_ERRORS as error:
-                    flash(str(error), "error")
-                    return redirect(url_for(page))
+            except OPERATION_ERRORS as error:
+                flash(str(error), "error")
+                return redirect(url_for(page))
         return wrapped
     return decorate
 
@@ -325,11 +325,32 @@ def backups():
         if operation == "create":
             snapshots.create(request.form.getlist("component"), VERSION)
             return saved("backups", "Backup created.")
+        if operation == "schedule":
+            snapshots.schedule(request.form.get("interval", ""), request.form.getlist("component"))
+            return saved("backups", "Backup schedule saved.")
         if operation == "verify":
             snapshots.verify(request.form.get("name", ""))
             return saved("backups", "Backup integrity verified.")
+        if operation == "import":
+            upload = request.files.get("archive")
+            if not upload or not upload.filename:
+                raise ValueError("Choose a ttui backup ZIP file.")
+            snapshots.import_archive(upload.stream)
+            return saved("backups", "Backup imported and verified.")
+        if operation == "restore":
+            config = request_settings()
+            if not check_password_hash(config["password_hash"], request.form.get("current_password", "")):
+                raise ValueError("Enter your current administrator password.")
+            path = snapshots.restore(request.form.get("name", ""), config)
+            if path is not None:
+                session.clear()
+                if path == config["path"]:
+                    flash("Backup restored. Sign in with the restored credentials.")
+                return redirect(path + "/login")
+            return saved("backups", "Backup restored.")
         raise ValueError("Unknown backup operation.")
-    return render_template("backups.html", archives=snapshots.history(), components=snapshots.COMPONENTS)
+    return render_template("backups.html", archives=snapshots.history(), components=snapshots.COMPONENTS,
+                           schedule=snapshots.load_schedule(), intervals=snapshots.INTERVALS)
 
 
 @app.get("/backups/<name>")
@@ -709,12 +730,17 @@ def main():
     mode.add_argument("--routing-enabled", action="store_true")
     mode.add_argument("--renew-certificates", action="store_true")
     mode.add_argument("--sample-metrics", action="store_true")
+    mode.add_argument("--scheduled-backup", action="store_true")
     parser.add_argument("--path")
     parser.add_argument("--username")
     args = parser.parse_args()
     os.umask(0o077)
     if args.sample_metrics:
         collect_sample(b.STATE)
+        return
+    if args.scheduled_backup:
+        with b.configuration_change():
+            snapshots.run_scheduled(VERSION)
         return
     if args.renew_certificates:
         acme.renew()

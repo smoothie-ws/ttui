@@ -13,6 +13,7 @@ SOURCES = {
     "cascade": ("TrustTunnel Client", "ttui-router.service", "ttui-cascade"),
     "caddy": ("Caddy", "caddy.service", None),
     "acme": ("VPN certificate renewal", "ttui-acme.service", None),
+    "backups": ("Scheduled backups", "ttui-backups.service", None),
 }
 LEVELS = ["Emergency", "Alert", "Critical", "Error", "Warning", "Notice", "Info", "Debug"]
 

@@ -2,14 +2,20 @@ import json
 import os
 import stat
 from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 from zipfile import ZipFile
+
+from werkzeug.security import generate_password_hash
+import tomlkit
 
 import backups
 import backend as b
+from routing import DEFAULT_ROUTING
 
 
 class BackupsTest(unittest.TestCase):
@@ -74,3 +80,95 @@ class BackupsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "size"):
                 backups.create(["panel"], "0.1.0")
         self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def test_import_restore_settings_preserves_signing_key_and_revokes_sessions(self):
+        panel = self.state / "panel.json"
+        captured = {"path": "/archived", "username": "admin", "address": "", "secure_cookie": False,
+                    "secret": "old", "password_hash": generate_password_hash("original", method="pbkdf2:sha256:1000")}
+        b.write_json(panel, captured)
+        archive = backups.archive_path(backups.create(["panel"], "0.1.0"))
+        with archive.open("rb") as source:
+            imported = backups.import_archive(source)
+        current = {**captured, "path": "/current", "secret": "current-key"}
+        b.write_json(panel, current)
+        self.assertEqual(backups.restore(imported, current), "/archived")
+        restored = json.loads(b.read(panel))
+        self.assertEqual(restored["secret"], "current-key")
+        self.assertEqual(restored["password_hash"], captured["password_hash"])
+        self.assertTrue(restored["session_epoch"])
+
+    def test_restore_endpoint_rolls_back_files_and_restarts_original_service(self):
+        credentials = self.config / "credentials.toml"
+        captured = '[[client]]\nusername = "first"\npassword = "original"\n'
+        current = captured.replace('"original"', '"current"')
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\ncredentials_file = "credentials.toml"\n', encoding="utf-8")
+        b.HOSTS.write_text('[[main_hosts]]\nhostname = "test.example"\n', encoding="utf-8")
+        credentials.write_text(captured, encoding="utf-8")
+        archive = backups.create(["endpoint", "clients"], "0.1.0")
+        credentials.write_text(current, encoding="utf-8")
+        readies = []
+
+        def readiness():
+            readies.append(b.read(credentials))
+            if len(readies) == 1:
+                raise RuntimeError("Startup failed")
+
+        with patch.object(b, "service_state", side_effect=lambda unit: "active" if unit == b.ENDPOINT_UNIT else "inactive"), \
+                patch.object(b, "active_endpoint", side_effect=readiness), patch.object(b, "service") as service:
+            with self.assertRaisesRegex(RuntimeError, "Startup failed"):
+                backups.restore(archive, {})
+        self.assertEqual(service.call_args_list, [call("restart", b.ENDPOINT_UNIT)] * 2)
+        self.assertEqual(readies, [captured, current])
+        self.assertEqual(b.read(credentials), current)
+        self.assertFalse((self.state / "clients.json").exists())
+
+    def test_rejects_archive_paths_outside_configuration(self):
+        source = BytesIO()
+        name = "state/../panel.json"
+        data = {"format": 1, "version": "0.1.0", "created": "", "components": ["panel"], "files": {name: {}}}
+        with ZipFile(source, "w") as archive:
+            archive.writestr(backups.MANIFEST, json.dumps(data))
+            archive.writestr(name, b"{}")
+        source.seek(0)
+        with self.assertRaisesRegex(ValueError, "invalid file path"):
+            backups.import_archive(source)
+        self.assertEqual(list(backups.location().iterdir()), [])
+
+    def test_failed_xray_validation_preserves_old_geodata_without_restarting(self):
+        b.VPN.write_text(tomlkit.dumps({"listen_address": "127.0.0.1:443", "forward_protocol": b.ROUTER_FORWARD}),
+                         encoding="utf-8")
+        b.write_json(b.ROUTING, {**DEFAULT_ROUTING, "enabled": True})
+        geo = b.GEO / "geosite.dat"
+        geo.write_bytes(b"captured geodata")
+        archive = backups.create(["geo"], "0.1.0")
+        geo.write_bytes(b"working geodata")
+
+        def invalid_config(_):
+            self.assertEqual(geo.read_bytes(), b"captured geodata")
+            raise RuntimeError("Xray rejected geodata")
+
+        with patch.object(b, "service_state", return_value="active"), patch.object(b, "service") as service, \
+                patch.object(b, "validate_xray", side_effect=invalid_config):
+            with self.assertRaisesRegex(RuntimeError, "Xray rejected geodata"):
+                backups.restore(archive, {})
+        service.assert_not_called()
+        self.assertEqual(geo.read_bytes(), b"working geodata")
+
+    def test_schedule_keeps_manual_and_imported_archives(self):
+        (self.state / "panel.json").write_bytes(b"{}")
+        manual = backups.create(["panel"], "0.1.0")
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        backups.schedule("daily", ["panel"], now)
+        backups.run_scheduled("0.1.0", now)
+        self.assertEqual(len(backups.history()), 1)
+        backups.run_scheduled("0.1.0", now + timedelta(days=1))
+        scheduled = backups.load_schedule()["last"]
+        with backups.archive_path(scheduled).open("rb") as source:
+            imported = backups.import_archive(source)
+        with patch.object(backups, "SCHEDULED_RETENTION", 1):
+            backups.run_scheduled("0.1.0", now + timedelta(days=2))
+        history = dict(backups.history())
+        self.assertEqual(len(history), 3)
+        self.assertIn(manual, history)
+        self.assertIn(imported, history)
+        self.assertEqual(sum(name.endswith("-auto.zip") for name in history), 1)

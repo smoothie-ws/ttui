@@ -42,6 +42,7 @@ if systemctl is-active --quiet trusttunnel.service; then
     exit 1
 fi
 systemctl is-active --quiet ttui-metrics.timer
+systemctl is-active --quiet ttui-backups.timer
 sudo systemctl start ttui-metrics.service
 sudo -u ttui sudo -n /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui.service >/dev/null
 python3 - "$work/install.log" <<'PY'
@@ -61,7 +62,7 @@ def get(path):
 
 def submit(path, page, **fields):
     fields["csrf"] = re.search(r'name="csrf" value="([^"]+)"', page)[1]
-    return client.open(base + path, urlencode(fields).encode(), timeout=30).read().decode()
+    return client.open(base + path, urlencode(fields, doseq=True).encode(), timeout=45).read().decode()
 
 submit("/login", get("/login"), username="admin", password=password)
 assert "Not configured" in get("/")
@@ -75,14 +76,28 @@ assert "TrustTunnel is running." in page, "Panel setup failed"
 assert "tt://?" in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="deeplink")
 assert "Set up TrustTunnel" not in get("/server")
 assert "Not configured" not in get("/")
-backup = submit("/backups", get("/backups"), operation="create", component="panel")
+backup = submit("/backups", get("/backups"), operation="create", component=["endpoint", "clients"])
 assert "Backup created." in backup
 archive = re.search(r'name="name" value="(ttui-[^\"]+\.zip)"', backup)[1]
 assert "Backup integrity verified." in submit("/backups", backup, operation="verify", name=archive)
 with client.open(f"{base}/backups/{archive}", timeout=15) as download:
     assert download.read(2) == b"PK"
     assert "attachment" in download.headers["Content-Disposition"]
+new_password = "smoke-client-rotated"
+updated = submit("/clients", backup, operation="rotate", username="smoke", password=new_password)
+assert "Clients updated." in updated
+assert new_password in submit("/export", updated, username="smoke", address="127.0.0.1:17443", format="toml")
+page = submit("/backups", get("/backups"), operation="restore", name=archive, current_password="incorrect")
+assert "Enter your current administrator password." in page
+page = submit("/backups", page, operation="restore", name=archive, current_password=password)
+assert "Backup restored." in page
+assert new_password not in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="toml")
+assert "tt://?" in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="deeplink")
+assert "Backup schedule saved." in submit("/backups", page, operation="schedule", interval="daily", component="panel")
 PY
+sudo -u ttui sed -i -E 's/("next": )"[^"]+"/\1"2000-01-01T00:00:00+00:00"/' /var/lib/ttui/backup-schedule.json
+sudo systemctl start ttui-backups.service
+sudo grep -Fq -- '-auto.zip' /var/lib/ttui/backup-schedule.json
 sudo systemctl is-active --quiet trusttunnel.service
 for config in vpn hosts credentials; do
     sudo test -s "/etc/trusttunnel/$config.toml"
@@ -96,6 +111,7 @@ patch_version=${version##*.}
 next_version="${version%.*}.$((patch_version + 1))"
 echo "$next_version" >"$work/source/VERSION"
 install_panel
+grep -Eq '^Configuration backup: ttui-.+\.zip$' "$work/install.log"
 test "$(ttui version)" = "$next_version"
 smoke
 sudo systemctl is-active --quiet trusttunnel.service

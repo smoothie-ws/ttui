@@ -8,7 +8,7 @@ units=/etc/systemd/system
 sudoers=/etc/sudoers.d/ttui
 launcher=/usr/local/bin/ttui
 managed_units=(ttui.service trusttunnel.service ttui-router.service)
-support_units=(ttui-acme.service ttui-acme.timer ttui-metrics.service ttui-metrics.timer)
+support_units=(ttui-acme.service ttui-acme.timer ttui-metrics.service ttui-metrics.timer ttui-backups.service ttui-backups.timer)
 
 check_public_domain() {
     local domain=$1 label='[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
@@ -75,8 +75,8 @@ fetch_release() (
     fi
     work=$(mktemp -d)
     trap 'rm -rf -- "$work"' EXIT
-    curl -fLSs --retry 3 "$base/ttui.tar.gz" -o "$work/ttui.tar.gz"
-    curl -fLSs --retry 3 "$base/ttui.tar.gz.sha256" -o "$work/ttui.tar.gz.sha256"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.gz" -o "$work/ttui.tar.gz"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.gz.sha256" -o "$work/ttui.tar.gz.sha256"
     read -r digest filename extra < "$work/ttui.tar.gz.sha256"
     filename=${filename#\*}
     if [[ ! $digest =~ ^[a-f0-9]{64}$ || $filename != ttui.tar.gz || -n $extra ]]; then
@@ -95,7 +95,7 @@ fetch_release() (
 
 download() {
     local url=$1 digest=$2 target=$3
-    curl -fLSs --retry 3 "$url" -o "$target"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$url" -o "$target"
     printf '%s  %s\n' "$digest" "$target" | sha256sum --check --status
 }
 
@@ -136,6 +136,9 @@ restore_install() {
         if [[ -e $backup/$file ]]; then
             cp -a -- "$backup/$file" "$file" || failed=1
         else
+            if [[ -e $file && $file == "$units/ttui-"*.timer ]]; then
+                systemctl disable --now "${file##*/}" || failed=1
+            fi
             rm -f -- "$file" || failed=1
         fi
     done
@@ -145,6 +148,24 @@ restore_install() {
     done
     return "$failed"
 }
+
+backup_before_update() (
+    local source_dir=$1 state=$2 version=$3 snapshot_tool
+    snapshot_tool=$(mktemp -d "$panel/.snapshot-tool.XXXXXX")
+    trap 'rm -rf -- "$snapshot_tool"' EXIT
+    chmod 0755 "$snapshot_tool"
+    install -m 0644 "$source_dir/"{backend,backups,certificates,routing}.py "$snapshot_tool/"
+    cd "$snapshot_tool"
+    runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" -c '
+import sys
+import backend
+import backups
+
+with backend.configuration_change():
+    archive = backups.create(backups.COMPONENTS, sys.argv[1], reason="pre-update")
+print("Configuration backup: " + archive)
+' "$version"
+)
 
 finish_update() {
     local status=$1 backup=$2 recovery
@@ -161,7 +182,7 @@ finish_update() {
 }
 
 main() {
-    local source_dir='' version=latest allow_downgrade=0 updating=0 target current
+    local source_dir='' version=latest allow_downgrade=0 updating=0 target current=unknown
     local domain='' access='' adding_https=0
     local -a packages=(ca-certificates curl openssl python3 python3-venv sudo unzip util-linux)
     local architecture xray_arch endpoint_sha client_sha xray_sha
@@ -282,6 +303,7 @@ main() {
     tar -xzf "$work/client.tar.gz" -C "$work/client"
     unzip -q "$work/xray.zip" -d "$work/xray"
     test -f "$source_dir/app.py"
+    if (( updating )); then backup_before_update "$source_dir" "$state" "$current"; fi
     (
     if (( updating )); then
         local backup="$work/backup"
@@ -376,7 +398,7 @@ main() {
         wait_service "$unit"
     done
     ln -sfn "$panel/install.sh" "$launcher"
-    systemctl enable --now ttui-metrics.timer
+    systemctl enable --now ttui-metrics.timer ttui-backups.timer
     )
     echo "ttui $target installed."
 }

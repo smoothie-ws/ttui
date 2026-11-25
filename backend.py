@@ -7,10 +7,16 @@ import shutil
 import subprocess
 import tempfile
 import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import RLock
 
 import tomlkit
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 from routing import DEFAULT_ROUTING, ROUTER_ADDRESS, compile_routing, xray_env
 
@@ -25,6 +31,17 @@ LAUNCH = STATE / "endpoint.json"
 GEO = STATE / "geo"
 ENDPOINT_UNIT, ROUTER_UNIT = "trusttunnel.service", "ttui-router.service"
 SYSTEMCTL = os.environ.get("TTUI_SYSTEMCTL", "/usr/bin/systemctl")
+
+
+@contextmanager
+def configuration_change():
+    with LOCK:
+        if fcntl is None:
+            yield
+        else:
+            with (STATE / ".configuration.lock").open("ab") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                yield
 
 
 def read(path, default=None):
@@ -49,6 +66,7 @@ def atomic(path, data):
             file.close()
             temporary.replace(path)
         finally:
+            file.close()
             temporary.unlink(missing_ok=True)
 
 
@@ -169,33 +187,45 @@ def validate_xray(config):
 
 
 def change_files(changes, apply, recover):
-    originals = {path: path.read_bytes() if path.exists() else None for path in changes}
-    written = []
-    applying = False
-    try:
-        for path, content in changes.items():
-            atomic(path, content)
-            written.append(path)
-        applying = True
-        apply()
-    except Exception as error:
-        failures = []
-        for path in reversed(written):
-            try:
-                if originals[path] is None:
-                    path.unlink(missing_ok=True)
+    with ExitStack() as stack:
+        originals = {}
+        for path in changes:
+            if path.exists():
+                checkpoint = stack.enter_context(tempfile.SpooledTemporaryFile(max_size=128 * 1024, dir=STATE))
+                with path.open("rb") as original:
+                    shutil.copyfileobj(original, checkpoint, length=128 * 1024)
+                checkpoint.seek(0)
+                originals[path] = checkpoint
+        written = []
+        applying = False
+        try:
+            for path, content in changes.items():
+                if isinstance(content, Path):
+                    with content.open("rb") as source:
+                        atomic(path, source)
                 else:
-                    atomic(path, originals[path])
-            except OSError as failed_restore:
-                failures.append(str(failed_restore))
-        if applying and not failures:
-            try:
-                recover()
-            except Exception as failed_restart:
-                failures.append(str(failed_restart))
-        if failures:
-            raise RuntimeError(f"{error}\nRecovery failed: {'; '.join(failures)}") from error
-        raise
+                    atomic(path, content)
+                written.append(path)
+            applying = True
+            apply()
+        except Exception as error:
+            failures = []
+            for path in reversed(written):
+                try:
+                    if path not in originals:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic(path, originals[path])
+                except OSError as failed_restore:
+                    failures.append(str(failed_restore))
+            if applying and not failures:
+                try:
+                    recover()
+                except Exception as failed_restart:
+                    failures.append(str(failed_restart))
+            if failures:
+                raise RuntimeError(f"{error}\nRecovery failed: {'; '.join(failures)}") from error
+            raise
 
 
 def apply_endpoint(changes, vpn):

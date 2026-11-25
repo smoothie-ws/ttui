@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Backups{% endblock %}
 {% block content %}
-{{ heading('Backups', 'Save and verify snapshots of panel and VPN configuration.') }}
+{{ heading('Backups', 'Save and restore panel and VPN configuration.') }}
 <section class="card stack">
   <h2>Create backup</h2>
   <p class="subtle">Archives contain credentials and private keys. Keep downloaded copies in private storage.</p>
@@ -17,12 +17,38 @@
   </form>
 </section>
 <section class="card stack">
+  <h2>Automatic backups</h2>
+  <p class="subtle">ttui keeps the seven newest scheduled backups.</p>
+  {% if schedule.error %}<p class="notice error">{{ schedule.error }}</p>{% endif %}
+  {% if schedule.next %}<p class="subtle">Next backup due {{ schedule.next }}. The schedule is checked hourly.</p>{% endif %}
+  <form method="post" class="stack">
+    {{ token() }}
+    <label>Schedule <select name="interval">
+      {% for key, interval in intervals.items() %}<option value="{{ key }}"{% if schedule.interval == key %} selected{% endif %}>{{ interval[0] }}</option>{% endfor %}
+    </select></label>
+    <div class="grid">
+      {% for key, label in components.items() %}
+      <label class="check"><input type="checkbox" name="component" value="{{ key }}"{% if key in schedule.components %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </div>
+    <div><button name="operation" value="schedule">Save schedule</button></div>
+  </form>
+</section>
+<section class="card stack">
+  <h2>Import backup</h2>
+  <form method="post" enctype="multipart/form-data" class="row">
+    {{ token() }}
+    <label>ttui backup ZIP <input type="file" name="archive" accept=".zip,application/zip" required></label>
+    <button name="operation" value="import">Import and verify</button>
+  </form>
+</section>
+<section class="card stack">
   <h2>Backup history</h2>
   {% for name, archive in archives %}
   <article class="journal-entry">
     <strong>{{ name }}</strong>
     {% if archive %}
-    <p class="subtle">{{ archive['created'] }} · ttui {{ archive['version'] }} · {{ archive['files']|length }} files</p>
+    <p class="subtle">{{ archive['created'] }} · ttui {{ archive['version'] }} · {{ archive['files']|length }} files{% if archive.get('reason') == 'scheduled' %} · Scheduled{% elif archive.get('reason') == 'pre-update' %} · Before update{% endif %}</p>
     <p class="subtle">{% for key in archive['components'] %}{{ components[key] }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
     {% else %}
     <p class="notice error">The archive manifest could not be read.</p>
@@ -33,6 +59,21 @@
       <button name="operation" value="verify">Verify integrity</button>
       <a class="button" href="{{ url_for('download_backup', name=name) }}">Download</a>
     </form>
+    {% if archive %}
+    <details>
+      <summary>Restore</summary>
+      <form method="post" class="stack">
+        {{ token() }}
+        <input type="hidden" name="name" value="{{ name }}">
+        <p>Matching files will be replaced. VPN connections may be interrupted.</p>
+        {% if 'panel' in archive['components'] %}
+        <p>Make sure you know the administrator credentials and panel path saved in this backup. Restoring them signs out all sessions.</p>
+        {% endif %}
+        <label>Current administrator password <input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div><button name="operation" value="restore">Restore backup</button></div>
+      </form>
+    </details>
+    {% endif %}
   </article>
   {% else %}
   <p class="subtle">No backups yet.</p>

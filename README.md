@@ -59,6 +59,10 @@ For an older installation without the `ttui` command, run the installer again. I
 
 Use **Backups** to select configuration components, create a ZIP archive, verify its SHA-256 checksums, and download a copy. ttui stores archives under `/var/lib/ttui/backups` with private permissions. Archives include passwords and private keys. Keep off-server copies in protected storage. Retain a separate backup of certificate files stored outside `/etc/trusttunnel`, including `/var/lib/ttui/acme` for VPN certificates issued by Certbot.
 
+Import a trusted ttui archive in **Backups**, then select **Restore** and confirm with your current administrator password. Browser imports must fit within the panel's 64 MiB request limit. Restoring replaces the matching managed files. Active services may restart, and ttui restores the previous files if they fail to start. A full Endpoint snapshot can also start a stopped Endpoint. Restoring panel settings signs out existing sessions and switches to the archived panel path and login credentials.
+
+Under **Automatic backups**, choose a daily or weekly schedule and the components to include. ttui keeps the seven newest automatic copies. The installer also creates a configuration snapshot before updating an existing installation. These copies appear in **Backup history**.
+
 ## Releases
 
 Work takes place on the `dev` branch. GitHub Actions runs on pushes to `dev` and `main`, and on pull requests. CI checks Python, JavaScript, and Bash, then tests installation, updates, and rollback on Linux. To prepare a stable release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md) on `dev`. After the reviewed changes reach `main`, push the matching SemVer tag from a commit in the history of `main`.
