@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Connection filters{% endblock %}
+{% block content %}
+{{ heading('Connection filters', 'TrustTunnel applies the first matching rule and allows unmatched connections.') }}
+{% macro rule(index, values) %}
+  <fieldset class="card stack" data-filter-row>
+    <input type="hidden" name="rule_index" value="{{ index }}">
+    <div class="grid">
+      <label>Action <select name="action">
+        <option value="allow">Allow</option><option value="deny" {% if values.get('action') == 'deny' %}selected{% endif %}>Deny</option>
+      </select></label>
+      <label>Source CIDR <input name="cidr" value="{{ values.get('cidr', '') }}" placeholder="Any address"></label>
+      <label>TLS random prefix or prefix/mask <input name="client_random_prefix" value="{{ values.get('client_random_prefix', '') }}" spellcheck="false"></label>
+      <label>TLS random auth key <input name="client_random_auth_key" type="password" autocomplete="off" value="{{ values.get('client_random_auth_key', '') }}" spellcheck="false"></label>
+    </div>
+    <div class="row">
+      <button type="button" data-filter-action="up">Move up</button>
+      <button type="button" data-filter-action="down">Move down</button>
+      <button type="button" data-filter-action="remove">Remove</button>
+    </div>
+  </fieldset>
+{% endmacro %}
+<form class="stack" method="post" data-filter-form>
+  {{ token() }}<input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="candidate" value="{{ candidate }}">
+  <section class="card stack">
+    <label>Filter file {{ filename }} <select name="state">
+      <option value="off">Disabled</option><option value="on" {% if enabled %}selected{% endif %}>Enabled</option>
+    </select></label>
+    <p class="subtle">Leave the match fields empty for a rule that applies to every connection.</p>
+    <div class="stack" data-filter-rows>
+      {% for index, values in rows %}{{ rule(index, values) }}{% endfor %}
+    </div>
+    <template data-filter-template>{{ rule('', {}) }}</template>
+    <div><button type="button" data-filter-action="add">Add rule</button></div>
+  </section>
+  {% if preview is not none %}
+  <section class="card stack">
+    <h2>Proposed changes</h2>
+    {% if preview %}<textarea rows="10" class="code" readonly aria-label="Configuration diff">{{ preview }}</textarea>{% else %}<p>No changes.</p>{% endif %}
+  </section>
+  {% endif %}
+  <div class="row">
+    <button name="operation" value="preview">Preview changes</button>
+    {% if preview %}<button class="primary" name="operation" value="apply">Apply and restart</button>{% endif %}
+    <a class="button" href="{{ url_for('server') }}">Server</a>
+  </div>
+</form>
+{% endblock %}

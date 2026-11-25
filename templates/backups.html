@@ -48,7 +48,7 @@
   <article class="journal-entry">
     <strong>{{ name }}</strong>
     {% if archive %}
-    <p class="subtle">{{ archive['created'] }} · ttui {{ archive['version'] }} · {{ archive['files']|length }} files{% if archive.get('reason') == 'scheduled' %} · Scheduled{% elif archive.get('reason') == 'pre-update' %} · Before update{% endif %}</p>
+    <p class="subtle">{{ archive['created'] }} · ttui {{ archive['version'] }} · {{ archive['files']|length }} files{% if archive.get('reason') == 'scheduled' %} · Scheduled{% elif archive.get('reason') == 'pre-update' %} · Before update{% elif archive.get('reason') == 'pre-config' %} · Before configuration change{% endif %}</p>
     <p class="subtle">{% for key in archive['components'] %}{{ components[key] }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
     {% else %}
     <p class="notice error">The archive manifest could not be read.</p>

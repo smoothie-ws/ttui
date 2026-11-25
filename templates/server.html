@@ -4,6 +4,7 @@
 {{ heading('Server', 'TLS hosts and TrustTunnel Endpoint configuration.') }}
 {% if not can_setup %}
 <div class="actions"><a href="{{ url_for('endpoint') }}" class="button">Open endpoint settings</a>
+  <a href="{{ url_for('filters') }}" class="button">Connection filters</a>
   <a href="{{ url_for('tls_hosts') }}" class="button">Manage TLS hosts</a></div>
 {% endif %}
 {% if can_setup %}
@@ -31,11 +32,11 @@
   </form>
 </section>
 {% endif %}
-<section class="card">
-  <h2>TOML configuration</h2>
+<details class="card" {% if save_error %}open{% endif %}>
+  <summary>Advanced TOML editor</summary>
   {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
   {% if routed %}<p class="subtle">While routing is enabled, the panel points forward_protocol at the local Xray instance.</p>{% endif %}
-  <form class="stack" method="post" action="{{ url_for('save_server') }}" data-confirm="Apply the configuration and restart TrustTunnel?">
+  <form class="details-body stack" method="post" action="{{ url_for('save_server') }}" data-confirm="Apply the configuration and restart TrustTunnel?">
     {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
     {% for key, label in [('vpn','Endpoint settings'),('hosts','TLS hosts'),('credentials','Clients'),('rules','Connection filters')] %}
     <details {% if key == 'vpn' %}open{% endif %}>
@@ -45,7 +46,7 @@
     {% endfor %}
     <div><button class="primary">Save and restart</button></div>
   </form>
-</section>
+</details>
 <details class="card">
   <summary>Startup options</summary>
   <form class="details-body stack" method="post" action="{{ url_for('save_launch') }}" data-confirm="Apply the startup options and restart TrustTunnel?">

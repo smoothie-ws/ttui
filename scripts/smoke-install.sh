@@ -100,6 +100,29 @@ page = submit("/backups", page, operation="restore", name=archive, current_passw
 assert "Backup restored." in page
 assert new_password not in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="toml")
 assert "tt://?" in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="deeplink")
+endpoint = get("/endpoint")
+fields = {"bind": "127.0.0.1", "port": "17443", "http1": "on", "http2": "on", "ipv6_available": "on",
+          "tls_handshake_timeout_secs": "10", "client_listener_timeout_secs": "600",
+          "connection_establishment_timeout_secs": "30", "tcp_connections_timeout_secs": "604800",
+          "udp_connections_timeout_secs": "300", "http2.max_frame_size": "32768", "metrics": "on",
+          "metrics.address": "127.0.0.1:11987", "subscription": "on", "subscription.hostname": "smoke.example",
+          "subscription.address": "smoke.example:17443", "subscription.path": "/vpn-config"}
+fields["revision"] = re.search(r'name="revision" value="([^"]+)"', endpoint)[1]
+preview = submit("/endpoint", endpoint, operation="preview", **fields)
+assert "max_frame_size = 32768" in preview
+fields["candidate"] = re.search(r'name="candidate" value="([^"]+)"', preview)[1]
+applied = submit("/endpoint", preview, operation="apply", **fields)
+assert "Previous configuration saved" in applied
+assert "Before configuration change" in get("/backups")
+assert client.open("http://127.0.0.1:11987/metrics", timeout=15).status == 200
+filters = get("/filters")
+rules = {"state": "on", "rule_index": "", "action": "deny", "cidr": "192.0.2.0/24",
+         "client_random_prefix": "", "client_random_auth_key": ""}
+rules["revision"] = re.search(r'name="revision" value="([^"]+)"', filters)[1]
+preview = submit("/filters", filters, operation="preview", **rules)
+assert '192.0.2.0/24' in preview
+rules["candidate"] = re.search(r'name="candidate" value="([^"]+)"', preview)[1]
+assert "Connection filters applied." in submit("/filters", preview, operation="apply", **rules)
 assert "Backup schedule saved." in submit("/backups", page, operation="schedule", interval="daily", component="panel")
 settings = get("/settings")
 assert "Panel settings saved." in submit("/settings", settings, username="admin", path="/ttui",

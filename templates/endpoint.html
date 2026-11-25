@@ -1,7 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Endpoint{% endblock %}
 {% block content %}
-{{ heading('TrustTunnel Endpoint', 'Configure the listener, protocols, and connection timeouts.') }}
+{{ heading('TrustTunnel Endpoint', 'Configure listeners, connection handling, and endpoint services.') }}
+{% macro fields(items, prefix='') %}
+  <div class="grid">
+    {% for field in items %}
+    {% set key = prefix ~ field.key %}
+    <label>{{ field.label }}
+      {% if field.kind == 'bool' %}
+      <select name="{{ key }}">
+        <option value="off" {% if not values[key] %}selected{% endif %}>Off</option>
+        <option value="on" {% if values[key] %}selected{% endif %}>On</option>
+      </select>
+      {% elif field.kind == 'status' %}
+      <select name="{{ key }}">
+        {% if field.default == '' %}<option value="">Use CONNECT status</option>{% endif %}
+        {% for status in form_schema.STATUS_CODES %}<option value="{{ status }}" {% if values[key] == status %}selected{% endif %}>{{ status }}</option>{% endfor %}
+      </select>
+      {% elif field.kind == 'list' %}
+      <textarea name="{{ key }}" rows="2" spellcheck="false">{{ values[key] }}</textarea>
+      {% else %}
+      <input name="{{ key }}" value="{{ values[key] }}" {% if field.kind == 'number' %}type="text" inputmode="numeric" pattern="[0-9]+"{% endif %}>
+      {% endif %}
+      {% if field.default != '' and field.kind != 'list' %}<small class="subtle">Default {{ ('On' if field.default else 'Off') if field.kind == 'bool' else field.default }}</small>{% endif %}
+    </label>
+    {% endfor %}
+  </div>
+{% endmacro %}
 <form class="stack" method="post">
   {{ token() }}
   <input type="hidden" name="revision" value="{{ revision }}">
@@ -13,7 +38,10 @@
       <label>Listen port <input type="number" name="port" min="1" max="65535" value="{{ values.port }}" required></label>
     </div>
     {% for key, label in protocols.items() %}
-    <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> {{ label }}</label>
+    <div class="stack">
+      <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> Enable {{ label }}</label>
+      <details><summary>{{ label }} settings</summary><div class="details-body">{{ fields(form_schema.PROTOCOL_FIELDS[key], key ~ '.') }}</div></details>
+    </div>
     {% endfor %}
   </section>
   {% for title, fields in groups.items() %}
@@ -29,6 +57,41 @@
     {% endfor %}
     </div>
   </section>
+  {% endfor %}
+  <details class="card" {% if preview is not none %}open{% endif %}>
+    <summary>Connection limits, authentication responses, and files</summary>
+    <div class="details-body stack">
+      <p class="subtle">Leave connection limits blank for unlimited connections. Changing the CONNECT status from 407 can prevent Chrome from authenticating.</p>
+      <p class="subtle">File paths are relative to the TrustTunnel configuration directory or point to files inside it.</p>
+      {{ fields(form_schema.CORE) }}
+    </div>
+  </details>
+  <details class="card">
+    <summary>Native outbound</summary>
+    <div class="details-body stack">
+      {% if routed %}
+      <p>The endpoint currently forwards through <a href="{{ url_for('routing') }}">Xray routing</a>.</p>
+      {% else %}
+      <label>Forwarding mode <select name="forward">
+        <option value="direct">Direct</option><option value="socks5" {% if values.forward == 'socks5' %} selected{% endif %}>SOCKS5</option>
+      </select></label>
+      {{ fields(form_schema.FORWARD_FIELDS, 'socks5.') }}
+      {% endif %}
+    </div>
+  </details>
+  {% for key, (label, items) in form_schema.OPTIONAL.items() %}
+  <details class="card" {% if values[key] != 'off' %}open{% endif %}>
+    <summary>{{ label }}</summary>
+    <div class="details-body stack">
+      <label>{{ label }} mode <select name="{{ key }}">
+        <option value="off">Not configured</option>
+        {% if key == 'subscription' %}<option value="disabled" {% if values[key] == 'disabled' %} selected{% endif %}>Configured and disabled</option>{% endif %}
+        <option value="on" {% if values[key] == 'on' %} selected{% endif %}>Enabled</option>
+      </select></label>
+      {% if key == 'metrics' %}<p class="subtle">TrustTunnel 1.3.1 requires HTTP/1.1 for metrics. The metrics listener has no ttui sign-in. Keep it on loopback unless the metrics network is protected.</p>{% endif %}
+      {{ fields(items, key ~ '.') }}
+    </div>
+  </details>
   {% endfor %}
   {% if preview is not none %}
   <section class="card stack">

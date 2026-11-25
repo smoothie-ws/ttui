@@ -1,4 +1,5 @@
 from io import BytesIO
+import re
 import shutil
 import tempfile
 import unittest
@@ -6,6 +7,8 @@ from pathlib import Path
 from unittest.mock import call, patch
 
 import tomlkit
+from werkzeug.security import generate_password_hash
+from werkzeug.datastructures import MultiDict
 
 import app as panel
 import acme
@@ -165,6 +168,75 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(vpn["listen_protocols"]["http2"]["max_frame_size"], 20000)
         self.assertEqual(vpn["metrics"]["address"], "127.0.0.1:1987")
         self.assertIn("quic", vpn["listen_protocols"])
+
+    def test_endpoint_preview_updates_native_tables_and_creates_a_backup(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n[listen_protocols.http2]\n', encoding="utf-8")
+        b.HOSTS.write_text('[[main_hosts]]\nhostname = "vpn.example.com"\n', encoding="utf-8")
+        config = {"path": "/ttui", "secret": "secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("example", method="pbkdf2:sha256:1000")}
+        fields = {"csrf": "token", "bind": "127.0.0.1", "port": "443", "http1": "on", "http2": "on",
+                  "http2.max_frame_size": "32768", "metrics": "on", "metrics.address": "[::1]:1987",
+                  "metrics.per_client_metrics": "on", "subscription": "on", "subscription.hostname": "vpn.example.com",
+                  "subscription.address": "vpn.example.com:443", "subscription.path": "/clients",
+                  "subscription.dns_upstreams": "tls://1.1.1.1\ntls://8.8.8.8", "default_max_http3_conns_per_client": "4"}
+        fields.update({key: str(default) for key, _, default in endpoint_settings.FIELDS["Timeouts (seconds)"]})
+        with patch.object(panel, "settings", return_value=config), patch.dict(panel.app.config, SECRET_KEY="secret"):
+            client = panel.app.test_client()
+            login = client.get("/ttui/login")
+            csrf = re.compile(rb'name="csrf" value="([^"]+)"')
+            self.assertEqual(client.post("/ttui/login", data={"csrf": csrf.search(login.data)[1].decode(),
+                                                              "username": "admin", "password": "example"}).status_code, 302)
+            page = client.get("/ttui/endpoint")
+            fields["csrf"] = csrf.search(page.data)[1].decode()
+            self.assertIn(b'name="http2.max_frame_size"', page.data)
+            fields["revision"] = re.search(rb'name="revision" value="([^"]+)"', page.data)[1].decode()
+            invalid = client.post("/ttui/endpoint", data={**fields, "operation": "preview", "subscription.path": "/ping/vpn"},
+                                  follow_redirects=True)
+            self.assertIn(b"must not overlap", invalid.data)
+            invalid = client.post("/ttui/endpoint", data={**fields, "operation": "preview", "http1": ""},
+                                  follow_redirects=True)
+            self.assertIn(b"Enable HTTP/1.1", invalid.data)
+            preview = client.post("/ttui/endpoint", data={**fields, "operation": "preview"})
+            self.assertIn(b'max_frame_size = 32768', preview.data)
+            fields["candidate"] = re.search(rb'name="candidate" value="([^"]+)"', preview.data)[1].decode()
+            self.service.assert_not_called()
+            accepted = client.post("/ttui/endpoint", data={**fields, "operation": "apply"}, follow_redirects=True)
+            self.assertIn(b"Previous configuration saved", accepted.data)
+        archives = panel.snapshots.history()
+        self.assertEqual(archives[0][1]["reason"], "pre-config")
+        saved = tomlkit.parse(b.read(b.VPN))
+        self.assertEqual(saved["listen_protocols"]["http2"]["max_frame_size"], 32768)
+        self.assertTrue(saved["metrics"]["per_client_metrics"])
+        self.assertEqual(saved["default_max_http3_conns_per_client"], 4)
+        self.assertEqual(saved["subscription"]["dns_upstreams"], ["tls://1.1.1.1", "tls://8.8.8.8"])
+        self.service.assert_called_once_with("restart", b.ENDPOINT_UNIT)
+
+    def test_endpoint_preserves_quic_aliases_and_managed_outbound(self):
+        vpn = tomlkit.parse('listen_address = "127.0.0.1:443"\n[listen_protocols.quic]\nmax_streams_bidi = 500\n')
+        vpn["forward_protocol"] = b.ROUTER_FORWARD
+        fields = {"bind": "127.0.0.1", "port": "443", "quic": "on", "quic.initial_max_streams_bidi": "700", "forward": "direct"}
+        fields.update({key: str(default) for key, _, default in endpoint_settings.FIELDS["Timeouts (seconds)"]})
+        self.assertEqual(endpoint_settings.values(vpn)["quic.initial_max_streams_bidi"], 500)
+        endpoint_settings.update(vpn, fields, routed=True)
+        self.assertEqual(vpn["listen_protocols"]["quic"], {"max_streams_bidi": 700})
+        self.assertEqual(vpn["forward_protocol"], b.ROUTER_FORWARD)
+
+    def test_filter_rows_keep_order_and_preserve_native_fields(self):
+        document = tomlkit.parse('[[rule]]\naction = "deny"\ncidr = "192.0.2.0/24"\nextra = true\n'
+                                 '[[rule]]\naction = "allow"\n')
+        values = MultiDict({"rule_index": ["1", "0", ""], "cidr": ["", "192.0.2.9/24", "2001:db8::/64"],
+                            "action": ["allow", "deny", "deny"], "client_random_prefix": ["", "", "aabb/ff00"],
+                            "client_random_auth_key": ["", "", ""]})
+        rows = endpoint_settings.update_filters(document, values)
+        self.assertEqual([index for index, _ in rows], ["1", "0", ""])
+        rules = tomlkit.parse(tomlkit.dumps(document))["rule"]
+        self.assertEqual([rule["action"] for rule in rules], ["allow", "deny", "deny"])
+        self.assertTrue(rules[1]["extra"])
+        self.assertEqual(rules[1]["cidr"], "192.0.2.0/24")
+        self.assertEqual(rules[2]["client_random_prefix"], "aabb/ff00")
+        values.setlist("client_random_auth_key", ["", "", "abcd"])
+        with self.assertRaisesRegex(ValueError, "optional mask"):
+            endpoint_settings.update_filters(document, values)
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

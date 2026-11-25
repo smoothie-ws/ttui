@@ -43,3 +43,29 @@ if (document.querySelector("[data-update-running]")) {
   };
   setTimeout(waitForUpdate, 4000);
 }
+
+const filterForm = document.querySelector("[data-filter-form]");
+if (filterForm) {
+  const rows = filterForm.querySelector("[data-filter-rows]");
+  filterForm.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-filter-action]");
+    if (!button) return;
+    const row = button.closest("[data-filter-row]");
+    switch (button.dataset.filterAction) {
+      case "add":
+        rows.append(filterForm.querySelector("[data-filter-template]").content.cloneNode(true));
+        filterForm.elements.state.value = "on";
+        rows.lastElementChild.querySelector("select").focus();
+        break;
+      case "up":
+        if (row.previousElementSibling) rows.insertBefore(row, row.previousElementSibling);
+        break;
+      case "down":
+        if (row.nextElementSibling) rows.insertBefore(row.nextElementSibling, row);
+        break;
+      case "remove":
+        row.remove();
+        break;
+    }
+  });
+}

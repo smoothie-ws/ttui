@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Configure native HTTP and QUIC settings, limits, forwarding, metrics, ICMP, subscriptions, and inbound connection filters through forms. Save a backup before applying a reviewed change.
 - Protect administrator sign-in with an optional TOTP authenticator and IP allowlist. Review administrative actions from the settings page.
 - Check official releases and install compatible upgrades from the panel. Verify the sign-in page before accepting a restarted panel service.
 - Create, download, verify, import, and restore private configuration backups. Schedule automatic backups in the panel and save a configuration snapshot before an upgrade.

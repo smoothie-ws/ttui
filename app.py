@@ -539,21 +539,81 @@ def server():
 def endpoint():
     raw = b.read(b.VPN)
     vpn = tomlkit.parse(raw)
+    hosts_raw = b.read(b.HOSTS, "")
+    routing_raw = b.read(b.ROUTING, "")
+    routed = b.load_routing()["enabled"]
+    original = (raw, hosts_raw, routing_raw)
     preview = None
     if request.method == "POST":
-        check_revision(raw)
-        endpoint_form.update(vpn, request.form, (80, 443) if PUBLIC_HTTPS else ())
+        check_revision(original)
+        endpoint_form.update(vpn, request.form, (80, 443) if PUBLIC_HTTPS else (), routed)
+        endpoint_form.validate(vpn, tomlkit.parse(hosts_raw))
+        b.check_clients(vpn)
+        if vpn.get("rules_file") and not b.related(vpn)[1].is_file():
+            raise ValueError("The specified connection filter file does not exist.")
         candidate = tomlkit.dumps(vpn)
         if request.form.get("operation") == "apply":
-            if request.form.get("candidate") != revision(candidate):
+            if request.form.get("candidate") != revision(candidate) or candidate == raw:
                 raise ValueError("Preview the current changes before applying them.")
+            snapshots.create(["endpoint", "clients"], VERSION, reason="pre-config")
             b.apply_endpoint({b.VPN: candidate}, vpn)
-            return saved("endpoint", "TrustTunnel settings applied.")
+            return saved("endpoint", "TrustTunnel settings applied. Previous configuration saved in Backups.")
+        if request.form.get("operation") != "preview":
+            abort(400)
         preview = "".join(unified_diff(raw.splitlines(keepends=True), candidate.splitlines(keepends=True),
                                        fromfile="Current", tofile="Proposed"))
     return render_template("endpoint.html", values=endpoint_form.values(vpn), groups=endpoint_form.FIELDS,
-                           protocols=endpoint_form.PROTOCOLS, revision=revision(raw), preview=preview,
-                           candidate=revision(tomlkit.dumps(vpn)))
+                           protocols=endpoint_form.PROTOCOLS, revision=revision(original), preview=preview,
+                           candidate=revision(tomlkit.dumps(vpn)), form_schema=endpoint_form, routed=routed)
+
+
+@app.route("/filters", methods=["GET", "POST"])
+@action("server")
+def filters():
+    raw = b.read(b.VPN)
+    vpn = tomlkit.parse(raw)
+    path = b.related(vpn)[1]
+    rules = b.read(path, "")
+    document = tomlkit.parse(rules)
+    rows = endpoint_form.filter_rows(document)
+    enabled = bool(vpn.get("rules_file"))
+    original = (raw, rules)
+    preview = None
+    candidate_id = ""
+    if request.method == "POST":
+        check_revision(original)
+        b.check_clients(vpn)
+        state = request.form.get("state")
+        if state not in ("on", "off"):
+            raise ValueError("Select whether connection filtering is enabled.")
+        enabled = state == "on"
+        changes = {}
+        if enabled:
+            vpn.setdefault("rules_file", path.relative_to(b.CONFIG).as_posix())
+            rows = endpoint_form.update_filters(document, request.form)
+            updated = tomlkit.dumps(document)
+            if updated != rules or not path.is_file():
+                changes[path] = updated
+        else:
+            vpn.pop("rules_file", None)
+        next_vpn = tomlkit.dumps(vpn)
+        if next_vpn != raw:
+            changes[b.VPN] = next_vpn
+        candidate_id = revision([enabled, next_vpn, changes.get(path, rules)])
+        if request.form.get("operation") == "apply":
+            if request.form.get("candidate") != candidate_id or not changes:
+                raise ValueError("Preview the current filters before applying them.")
+            snapshots.create(["endpoint", "clients"], VERSION, reason="pre-config")
+            b.apply_endpoint(changes, vpn)
+            return saved("filters", "Connection filters applied.")
+        if request.form.get("operation") != "preview":
+            abort(400)
+        preview = "".join(line for filename, before, after in (
+            ("vpn.toml", raw, next_vpn), (path.name, rules, changes.get(path, rules))
+        ) for line in unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True),
+                                   fromfile=filename, tofile=filename + " (proposed)"))
+    return render_template("filters.html", rows=rows, filename=path.relative_to(b.CONFIG).as_posix(), enabled=enabled,
+                           revision=revision(original), candidate=candidate_id, preview=preview)
 
 
 @app.post("/server")
