@@ -24,8 +24,8 @@ import backend as b
 
 SETTINGS = b.STATE / "panel.json"
 VERSION = b.read(Path(__file__).with_name("VERSION"), "dev").strip()
-HOST_TYPES = {"main_hosts": "VPN", "ping_hosts": "Проверка доступности",
-              "speedtest_hosts": "Проверка скорости", "reverse_proxy_hosts": "Reverse proxy"}
+HOST_TYPES = {"main_hosts": "VPN", "ping_hosts": "Health check",
+              "speedtest_hosts": "Speed test", "reverse_proxy_hosts": "Reverse proxy"}
 FILE_KEYS = ("vpn", "hosts", "credentials", "rules")
 OPERATION_ERRORS = (ValueError, ParseError, OSError, RuntimeError, subprocess.TimeoutExpired)
 app = Flask(__name__)
@@ -141,13 +141,13 @@ def login():
             now = time.monotonic()
             login_attempts[:] = [stamp for stamp in login_attempts if now - stamp < 60]
             if len(login_attempts) >= 10:
-                return render_template("login.html", error="Слишком много попыток. Подождите минуту."), 429
+                return render_template("login.html", error="Too many attempts. Try again in a minute."), 429
             config = settings()
             password_ok = check_password_hash(config["password_hash"], request.form.get("password", ""))
             username_ok = hmac.compare_digest(config["username"].encode(), request.form.get("username", "").encode())
             if not password_ok or not username_ok:
                 login_attempts.append(now)
-                return render_template("login.html", error="Неверный логин или пароль."), 401
+                return render_template("login.html", error="Incorrect username or password."), 401
             login_attempts.clear()
             session.clear()
             session["auth"] = session_id(config)
@@ -189,7 +189,7 @@ def revision(raw):
 
 def check_revision(raw):
     if request.form.get("revision") != revision(raw):
-        raise ValueError("Настройки изменились после открытия страницы. Проверьте текущую версию.")
+        raise ValueError("These settings changed after you opened this page. Review the latest version and try again.")
 
 
 @app.get("/")
@@ -219,18 +219,18 @@ def update_client():
     operation = request.form.get("operation")
     if not vpn.get("credentials_file"):
         if operation != "create":
-            raise ValueError("Файл клиентов отключён.")
+            raise ValueError("The client credentials file is disabled.")
         if entries:
-            raise ValueError("Подключите существующий файл клиентов в настройках сервера.")
+            raise ValueError("Select the existing client credentials file in Server settings.")
     existing = next((entry for entry in entries if entry["username"] == name), None)
     password = None
     if operation in ("create", "rotate"):
         password = request.form.get("password") or secrets.token_urlsafe(24)
         if len(password) > 512 or any(ord(c) < 32 for c in password):
-            raise ValueError("Пароль слишком длинный или содержит управляющие символы.")
+            raise ValueError("The password is too long or contains control characters.")
     if operation == "create":
         if existing or not re.fullmatch(r"[^\s\x00-\x1f:]{1,64}", name):
-            raise ValueError("Введите уникальное имя без пробелов и двоеточий, до 64 символов.")
+            raise ValueError("Enter a unique username of up to 64 characters, with no spaces or colons.")
         if "client" not in doc:
             doc["client"] = tomlkit.aot()
         doc["client"].append({"username": name, "password": password})
@@ -239,13 +239,13 @@ def update_client():
     elif operation == "delete" and existing is not None:
         entries.remove(existing)
     else:
-        raise ValueError("Клиент не найден.")
+        raise ValueError("Client not found.")
     changes = {credentials: tomlkit.dumps(doc)}
     if not vpn.get("credentials_file"):
         vpn["credentials_file"] = str(credentials.relative_to(b.CONFIG))
         changes[b.VPN] = tomlkit.dumps(vpn)
     b.apply_endpoint(changes, vpn)
-    return saved("index", "Клиенты обновлены.")
+    return saved("index", "Clients updated.")
 
 
 @app.post("/export")
@@ -253,7 +253,7 @@ def update_client():
 def export():
     name = request.form.get("username", "")
     if not any(entry["username"] == name for entry in b.configured_clients(read_vpn())):
-        raise ValueError("Клиент не найден.")
+        raise ValueError("Client not found.")
     return render_template("export.html", username=name, content=b.export_client(name, request.form),
                            fmt=request.form.get("format"))
 
@@ -294,7 +294,7 @@ def save_server():
                 continue
             if path != old_path and path.exists():
                 if data[key] != previous[key]:
-                    raise ValueError(f"Сначала подключите существующий {key}_file, затем измените его содержимое.")
+                    raise ValueError(f"Select the existing {key}_file first, then edit its contents.")
                 tomlkit.parse(b.read(path))
             else:
                 tomlkit.parse(data[key])
@@ -302,7 +302,7 @@ def save_server():
         b.apply_endpoint(changes, vpn)
     except OPERATION_ERRORS as error:
         return render_server(data, request.form["revision"], str(error)), 400
-    return saved("server", "Конфигурация сохранена. TrustTunnel перезапущен.")
+    return saved("server", "Configuration saved. TrustTunnel restarted.")
 
 
 @app.post("/launch")
@@ -312,7 +312,7 @@ def save_launch():
                ("loglvl", "logfile", "jobs", "sentry_dsn")}
     b.endpoint_command(options)
     b.apply_endpoint({b.LAUNCH: json.dumps(options, indent=2) + "\n"}, read_vpn())
-    return saved("server", "Параметры запуска сохранены.")
+    return saved("server", "Startup options saved.")
 
 
 @app.post("/hosts")
@@ -323,24 +323,24 @@ def add_host():
     hosts = tomlkit.parse(source["hosts"])
     group = request.form.get("group")
     if group not in HOST_TYPES:
-        raise ValueError("Неизвестный тип домена.")
+        raise ValueError("Unknown host type.")
     hostname = request.form.get("hostname", "").strip()
     if not hostname or any(character.isspace() for character in hostname):
-        raise ValueError("Введите имя хоста.")
+        raise ValueError("Enter a hostname.")
     records = hosts.get(group, [])
     if any(host.get("hostname", "").casefold() == hostname.casefold() for host in records):
-        raise ValueError("Этот хост уже есть в выбранной группе.")
+        raise ValueError("This hostname already exists in the selected group.")
     record = {"hostname": hostname}
     for key in ("cert_chain_path", "private_key_path"):
         value = request.form.get(key, "").strip()
         if not value or not (b.CONFIG / value).is_file():
-            raise ValueError(f"Файл {key} должен быть доступен TrustTunnel.")
+            raise ValueError(f"TrustTunnel must be able to read the file specified by {key}.")
         record[key] = value
     if group not in hosts:
         hosts[group] = tomlkit.aot()
     hosts[group].append(record)
     b.apply_endpoint({b.HOSTS: tomlkit.dumps(hosts)}, vpn)
-    return saved("server", "Домен добавлен.")
+    return saved("server", "Host added.")
 
 
 def render_routing(source, version, error=None):
@@ -367,7 +367,7 @@ def save_routing():
         b.apply_routing(json.loads(source))
     except OPERATION_ERRORS as error:
         return render_routing(source, request.form["revision"], str(error)), 400
-    return saved("routing", "Маршрутизация сохранена.")
+    return saved("routing", "Routing settings saved.")
 
 
 @app.post("/geofiles")
@@ -375,12 +375,12 @@ def save_routing():
 def upload_geo():
     upload = request.files.get("data")
     if not upload or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.dat", upload.filename or ""):
-        raise ValueError("Выберите файл Xray с расширением .dat.")
+        raise ValueError("Select an Xray .dat file.")
     if not upload.stream.read(1):
-        raise ValueError("Файл пуст.")
+        raise ValueError("The file is empty.")
     upload.stream.seek(0)
     b.replace_geofile(upload.filename, upload.stream)
-    return saved("routing", "Геофайл сохранён.")
+    return saved("routing", "Geodata file saved.")
 
 
 @app.get("/settings")
@@ -392,7 +392,7 @@ def clean_path(value):
     if value == "/":
         return ""
     if not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
-        raise ValueError("Путь должен начинаться с / и содержать буквы A–Z, цифры, _ или -.")
+        raise ValueError("The path must start with / and contain only letters A–Z, digits, underscores, hyphens, and slash separators.")
     return value
 
 
@@ -405,9 +405,9 @@ def save_settings():
     username = form.get("username", "").strip()
     password = form.get("password", "")
     if not username or len(username) > 64 or (password and not 12 <= len(password) <= 256):
-        raise ValueError("Укажите логин до 64 символов и новый пароль длиной 12–256 символов.")
+        raise ValueError("Enter a username of up to 64 characters and a new password of 12–256 characters.")
     if not check_password_hash(config["password_hash"], form.get("current_password", "")):
-        raise ValueError("Введите текущий пароль.")
+        raise ValueError("Enter the current password.")
     old_path = config["path"]
     secure = form.get("secure_cookie") == "on"
     changed_login = username != config["username"] or bool(password)
@@ -422,7 +422,7 @@ def save_settings():
     request.environ["ttui.settings"] = config
     if changed_login or path != old_path:
         return redirect(path + "/login")
-    return saved("panel_settings", "Настройки панели сохранены.")
+    return saved("panel_settings", "Panel settings saved.")
 
 
 def main():

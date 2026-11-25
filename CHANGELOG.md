@@ -1,13 +1,14 @@
-# Изменения
+# Changelog
 
-## В разработке
+## Unreleased
 
-- Безопасное переключение между существующими файлами клиентов и фильтров.
-- Сохранение состояния остановленных служб при изменении маршрутизации и загрузка геофайлов без лишнего перезапуска.
-- Проверки CI на каждом push в `dev`.
+- Safely switch between existing client credentials and connection filter files.
+- Preserve the state of stopped services when applying routing changes and avoid unnecessary restarts when uploading geodata.
+- Run CI on every push to `dev`.
+- Translate the panel, diagnostics, and documentation into English.
 
 ## 0.1.0
 
-- Первая версия веб-панели TrustTunnel с управлением клиентами, TLS-хостами и Xray-маршрутизацией.
-- Установка из GitHub Releases и обновление на месте с автоматическим восстановлением предыдущего запуска при ошибке.
-- GitHub Actions собирает, проверяет и публикует релизы по тегам SemVer.
+- Initial TrustTunnel web panel with client management, TLS hosts, and Xray routing.
+- Install from GitHub Releases and update in place with automatic recovery after a failed startup.
+- Build, verify, and publish releases from SemVer tags with GitHub Actions.

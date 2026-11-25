@@ -1,57 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Клиенты{% endblock %}
+{% block title %}Clients{% endblock %}
 {% block content %}
-{{ heading('Клиенты', 'Доступ к TrustTunnel и импорт подключения.', 'TrustTunnel', endpoint) }}
+{{ heading('Clients', 'Manage TrustTunnel access and connection imports.', 'TrustTunnel', endpoint) }}
 {% if not initialized %}
-<p class="notice">Укажите адрес прослушивания и TLS-хост в разделе <a href="{{ url_for('server') }}">Сервер</a>.</p>
+<p class="notice">Set a listen address and TLS host under <a href="{{ url_for('server') }}">Server</a>.</p>
 {% endif %}
 <section class="card">
-  <h2>Новый клиент</h2>
+  <h2>New client</h2>
   <form class="row" method="post" action="{{ url_for('update_client') }}">
     {{ token() }}<input type="hidden" name="operation" value="create">
-    <label>Имя <input name="username" maxlength="64" placeholder="например, laptop" required></label>
-    <label>Пароль <input type="password" name="password" maxlength="512" autocomplete="new-password" placeholder="Сгенерировать автоматически"></label>
-    <button class="primary" {% if not initialized %}disabled{% endif %}>Добавить</button>
+    <label>Username <input name="username" maxlength="64" placeholder="e.g. laptop" required></label>
+    <label>Password <input type="password" name="password" maxlength="512" autocomplete="new-password" placeholder="Generate automatically"></label>
+    <button class="primary" {% if not initialized %}disabled{% endif %}>Add</button>
   </form>
 </section>
 <section class="card client-list">
-  <h2>Подключения <span class="count">{{ clients|length }}</span></h2>
+  <h2>Connections <span class="count">{{ clients|length }}</span></h2>
   {% for client in clients %}
   <details>
-    <summary><span>{{ client.username }}</span><span class="subtle">Действия</span></summary>
+    <summary><span>{{ client.username }}</span><span class="subtle">Actions</span></summary>
     <div class="details-body">
       <form class="stack" method="post" action="{{ url_for('export') }}">
         {{ token() }}<input type="hidden" name="username" value="{{ client.username }}">
         <div class="row">
-          <label>Публичный адрес <input name="address" value="{{ address }}" placeholder="vpn.example.com:443" spellcheck="false"></label>
-          <label>Формат <select name="format"><option value="deeplink">Ссылка tt://</option><option value="toml">TOML</option></select></label>
-          <button class="primary">Экспортировать</button>
+          <label>Public address <input name="address" value="{{ address }}" placeholder="vpn.example.com:443" spellcheck="false"></label>
+          <label>Format <select name="format"><option value="deeplink">tt:// link</option><option value="toml">TOML</option></select></label>
+          <button class="primary">Export</button>
         </div>
         <details>
-          <summary>Параметры экспорта</summary>
+          <summary>Export options</summary>
           <div class="details-body grid">
-            <label>Имя сервера <input name="name"></label>
-            <label>DNS через пробел <input name="dns-upstream" placeholder="tls://1.1.1.1"></label>
-            <label>Пользовательский SNI <input name="custom-sni"></label>
-            <label>URL подписки <input name="subscription-url" type="url"></label>
+            <label>Server name <input name="name"></label>
+            <label>DNS servers (space-separated) <input name="dns-upstream" placeholder="tls://1.1.1.1"></label>
+            <label>Custom SNI <input name="custom-sni"></label>
+            <label>Subscription URL <input name="subscription-url" type="url"></label>
             <label>Client random prefix <input name="client-random-prefix" placeholder="a0b0/f0f0"></label>
             <label>Client random auth key <input name="client-random-auth-key"></label>
-            <label class="check"><input type="checkbox" name="subscription-only"> Только URL подписки</label>
+            <label class="check"><input type="checkbox" name="subscription-only"> Subscription URL only</label>
           </div>
         </details>
       </form>
       <div class="actions separate">
-        <form method="post" action="{{ url_for('update_client') }}" data-confirm="Заменить пароль клиента? Действующие ссылки потеряют доступ.">
-          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}"><button name="operation" value="rotate">Сменить пароль</button>
+        <form method="post" action="{{ url_for('update_client') }}" data-confirm="Rotate the client password? Existing links will lose access.">
+          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}"><button name="operation" value="rotate">Rotate password</button>
         </form>
-        <form method="post" action="{{ url_for('update_client') }}" data-confirm="Удалить клиента и отозвать доступ?">
-          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}"><button class="danger" name="operation" value="delete" {% if clients|length <= 1 and not can_remove_last %}disabled title="Сохраните хотя бы одного клиента"{% endif %}>Удалить</button>
+        <form method="post" action="{{ url_for('update_client') }}" data-confirm="Delete this client and revoke access?">
+          {{ token() }}<input type="hidden" name="username" value="{{ client.username }}"><button class="danger" name="operation" value="delete" {% if clients|length <= 1 and not can_remove_last %}disabled title="Keep at least one client"{% endif %}>Delete</button>
         </form>
       </div>
     </div>
   </details>
   {% else %}
-  <p class="subtle">Клиентов пока нет.</p>
+  <p class="subtle">No clients yet.</p>
   {% endfor %}
 </section>
 {% endblock %}

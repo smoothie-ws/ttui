@@ -1,49 +1,49 @@
 {% extends "base.html" %}
-{% block title %}Маршрутизация{% endblock %}
+{% block title %}Routing{% endblock %}
 {% block scripts %}<script defer src="{{ url_for('static', filename='routing.js') }}"></script>{% endblock %}
 {% block content %}
-{{ heading('Маршрутизация', 'Первое совпавшее правило выбирает выход.', 'Xray', router) }}
+{{ heading('Routing', 'The first matching rule selects the outbound.', 'Xray', router) }}
 {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
 <form id="routing-form" class="stack" method="post" action="{{ url_for('save_routing') }}">
   {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
   <div id="routing-editor" class="stack" hidden>
     <section class="card stack">
-      <label class="check"><input id="routing-enabled" type="checkbox"> Включить маршрутизацию</label>
+      <label class="check"><input id="routing-enabled" type="checkbox"> Enable routing</label>
       <div class="row">
-        <label>Выход по умолчанию <select id="routing-default"></select></label>
-        <label>Разрешение DNS для IP-правил <select id="routing-strategy">
-          <option value="AsIs">Только известный IP</option><option value="IPIfNonMatch">Если домен не совпал</option><option value="IPOnDemand">При проверке IP</option>
+        <label>Default outbound <select id="routing-default"></select></label>
+        <label>DNS resolution for IP rules <select id="routing-strategy">
+          <option value="AsIs">Use known IP addresses only</option><option value="IPIfNonMatch">If no domain rule matches</option><option value="IPOnDemand">When evaluating an IP rule</option>
         </select></label>
       </div>
     </section>
     <section class="card stack">
-      <div class="section-title"><h2>Выходы</h2><button type="button" id="add-outbound">Добавить выход</button></div>
-      <p class="subtle">Встроенные выходы: direct (Freedom) и block (блокировка).</p>
+      <div class="section-title"><h2>Outbounds</h2><button type="button" id="add-outbound">Add outbound</button></div>
+      <p class="subtle">Built-in outbounds are direct (Freedom) and block (Blackhole).</p>
       <div id="outbounds" class="stack"></div>
     </section>
     <section class="card stack">
-      <div class="section-title"><h2>Правила</h2><button type="button" id="add-rule">Добавить правило</button></div>
+      <div class="section-title"><h2>Rules</h2><button type="button" id="add-rule">Add rule</button></div>
       <div id="rules" class="stack"></div>
-      <p class="subtle">Домены: domain:example.org, regexp:, geosite:, ext:файл.dat:группа. IP: CIDR, geoip:, ext:файл.dat:группа.</p>
+      <p class="subtle">Domains: domain:example.org, regexp:, geosite:, ext:file.dat:group. IP: CIDR, geoip:, ext:file.dat:group.</p>
     </section>
   </div>
   <details class="card" id="routing-raw" open>
-    <summary>Конфигурация JSON</summary>
+    <summary>JSON configuration</summary>
     <div class="details-body stack">
-      <textarea class="code" name="spec" id="routing-spec" aria-label="Конфигурация маршрутизации JSON" rows="16" spellcheck="false">{{ source }}</textarea>
-      <div><button id="load-spec" type="button" hidden>Загрузить JSON в редактор</button></div>
+      <textarea class="code" name="spec" id="routing-spec" aria-label="Routing configuration (JSON)" rows="16" spellcheck="false">{{ source }}</textarea>
+      <div><button id="load-spec" type="button" hidden>Load JSON into editor</button></div>
     </div>
   </details>
   <p id="routing-error" class="notice error" role="alert" hidden></p>
-  <div><button class="primary">Применить маршрутизацию</button></div>
+  <div><button class="primary">Apply routing</button></div>
 </form>
 <section class="card stack">
-  <h2>Геофайлы</h2>
+  <h2>Geodata files</h2>
   {% if geofiles %}<div class="files">{% for file in geofiles %}<code>{{ file }}</code>{% endfor %}</div>{% endif %}
   <form class="row" method="post" action="{{ url_for('upload_geo') }}" enctype="multipart/form-data">
     {{ token() }}
-    <label>Файл Xray .dat <input name="data" type="file" accept=".dat" required></label>
-    <button>Загрузить или заменить</button>
+    <label>Xray .dat file <input name="data" type="file" accept=".dat" required></label>
+    <button>Upload or replace</button>
   </form>
 </section>
 {% endblock %}

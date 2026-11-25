@@ -61,7 +61,7 @@ def command(args, **kwargs):
                             capture_output=True, timeout=kwargs.pop("timeout", 20), **kwargs)
     if result.returncode:
         message = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(message[-2500:] or f"Команда завершилась с кодом {result.returncode}.")
+        raise RuntimeError(message[-2500:] or f"Command exited with code {result.returncode}.")
     return result.stdout
 
 
@@ -83,15 +83,15 @@ def active_endpoint():
         time.sleep(2)
         if initial == set(command(args, timeout=3).splitlines()):
             return
-    raise RuntimeError("TrustTunnel завершился при запуске. Проверьте journalctl -u trusttunnel.")
+    raise RuntimeError("TrustTunnel exited during startup. Check journalctl -u trusttunnel.")
 
 
 def managed_path(value, fallback):
     if not isinstance(value if value is not None else fallback, str):
-        raise ValueError("Путь конфигурации должен быть строкой.")
+        raise ValueError("The configuration path must be a string.")
     path = (CONFIG / (value or fallback)).resolve()
     if not path.is_relative_to(CONFIG) or path in (CONFIG, VPN, HOSTS):
-        raise ValueError("Файлы клиентов и фильтров должны находиться внутри каталога TrustTunnel.")
+        raise ValueError("Client credentials and connection filter files must be inside the TrustTunnel configuration directory.")
     return path
 
 
@@ -99,21 +99,21 @@ def related(vpn):
     credentials = managed_path(vpn.get("credentials_file"), "credentials.toml")
     rules = managed_path(vpn.get("rules_file"), "rules.toml")
     if credentials == rules:
-        raise ValueError("Для клиентов и фильтров нужны разные файлы.")
+        raise ValueError("Client credentials and connection filters must use separate files.")
     return credentials, rules
 
 
 def clients(document):
     entries = document.get("client", [])
     if not isinstance(entries, list):
-        raise ValueError("Используйте отдельную таблицу [[client]] для каждого клиента.")
+        raise ValueError("Use a separate [[client]] table for each client.")
     names = set()
     for entry in entries:
         if (not isinstance(entry, dict) or not all(isinstance(entry.get(key), str) and entry[key]
                                                   for key in ("username", "password"))):
-            raise ValueError("У каждого клиента должны быть username и password.")
+            raise ValueError("Each client must have a username and password.")
         if entry["username"] in names:
-            raise ValueError("Имена клиентов должны быть уникальны.")
+            raise ValueError("Client usernames must be unique.")
         names.add(entry["username"])
     return entries
 
@@ -134,7 +134,7 @@ def configured_clients(vpn, raw=None):
 
 def check_clients(vpn, raw=None):
     if not configured_clients(vpn, raw) and not loopback(vpn):
-        raise ValueError("Для endpoint вне loopback нужны credentials_file и хотя бы один клиент.")
+        raise ValueError("An endpoint listening outside loopback requires credentials_file and at least one client.")
 
 
 def load_routing():
@@ -149,11 +149,11 @@ def endpoint_command(options):
     command_line = [ENDPOINT, str(VPN), str(HOSTS)]
     log_level = options.get("loglvl", "info")
     if log_level not in ("info", "debug", "trace"):
-        raise ValueError("Выберите допустимый уровень логов.")
+        raise ValueError("Select a valid log level.")
     command_line.append(f"--loglvl={log_level}")
     if jobs := options.get("jobs"):
         if not re.fullmatch(r"[1-9][0-9]{0,3}", jobs):
-            raise ValueError("Число потоков должно быть целым положительным числом до 9999.")
+            raise ValueError("Enter a thread count from 1 to 9999.")
         command_line.append(f"--jobs={jobs}")
     for key in ("logfile", "sentry_dsn"):
         if value := options.get(key):
@@ -194,7 +194,7 @@ def change_files(changes, apply, recover):
             except Exception as failed_restart:
                 failures.append(str(failed_restart))
         if failures:
-            raise RuntimeError(f"{error}\nОшибка восстановления: {'; '.join(failures)}") from error
+            raise RuntimeError(f"{error}\nRecovery failed: {'; '.join(failures)}") from error
         raise
 
 
@@ -202,11 +202,11 @@ def apply_endpoint(changes, vpn):
     credentials, rules = related(vpn)
     check_clients(vpn, changes.get(credentials))
     if vpn.get("rules_file") and not (rules in changes or rules.is_file()):
-        raise ValueError("Указанный файл фильтров отсутствует.")
+        raise ValueError("The specified connection filter file does not exist.")
     if load_routing()["enabled"]:
         forward = vpn.get("forward_protocol", {})
         if forward != ROUTER_FORWARD:
-            raise ValueError("Пока маршрутизация включена, её SOCKS5-выход управляется панелью.")
+            raise ValueError("The panel manages the SOCKS5 outbound while routing is enabled.")
     was_active = service_state(ENDPOINT_UNIT) == "active"
 
     def restart():
@@ -298,7 +298,7 @@ def replace_geofile(filename, data):
 def export_client(name, form):
     fmt = form.get("format", "deeplink")
     if fmt not in ("deeplink", "toml"):
-        raise ValueError("Неизвестный формат экспорта.")
+        raise ValueError("Unknown export format.")
     args = [ENDPOINT, str(VPN), str(HOSTS), f"--client_config={name}", f"--format={fmt}"]
     for field in ("address", "dns-upstream"):
         args.extend(f"--{field}={value}" for value in form.get(field, "").split() if value)
@@ -315,7 +315,7 @@ def export_client(name, form):
     if fmt == "deeplink":
         link = re.search(r"(?m)^tt://\?\S+", output)
         if not link:
-            raise ValueError("TrustTunnel не вернул ссылку.")
+            raise ValueError("TrustTunnel did not return a link.")
         return link.group()
     # A successful native TOML export must itself be parseable.
     tomlkit.parse(output)

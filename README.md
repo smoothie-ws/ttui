@@ -1,33 +1,33 @@
 # ttui
 
-Минималистичная веб-панель для одного TrustTunnel Endpoint. Управляет клиентами, ссылками `tt://`, TLS-доменами и конфигурацией сервера. Xray выбирает выходы по доменам и IP. Каскады используют официальный TrustTunnel Client.
+A minimal web panel for a single TrustTunnel Endpoint. Manage clients, export `tt://` links, and configure TLS hosts and server settings. Xray selects outbounds by domain or IP, and the official TrustTunnel Client connects to upstream endpoints in a cascade.
 
-## Установка
+## Installation
 
-Требуются systemd и Python 3.9+ на Debian или Ubuntu, x86-64 или ARM64. Для мастера TrustTunnel понадобится TLS-имя VPN-сервера. Направьте DNS-запись на сервер и откройте порт endpoint на TCP, а для HTTP/3 также на UDP. Для Let's Encrypt HTTP-01 нужен доступный TCP-порт 80.
+Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64. The TrustTunnel setup wizard needs a TLS hostname for the VPN server. Point its DNS record at the server and open the endpoint port for TCP. Open the same UDP port to use HTTP/3. Let's Encrypt HTTP-01 validation requires TCP port 80.
 
 ```bash
 curl -fsSL https://github.com/smoothie-ws/ttui/releases/latest/download/bootstrap.sh | sudo bash
 ```
 
-Установщик проверяет SHA-256 архива релиза, запускает штатный мастер TrustTunnel и выводит сгенерированный пароль администратора. Для установки из рабочего дерева выполните `sudo bash install.sh --source "$PWD"`. Аргумент `--panel-only` пропускает мастер, позволяя заполнить конфигурацию во вкладке **Сервер**. Без терминала установщик также пропустит мастер. Установщик использует TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0 и Xray v26.11.9.
+The installer verifies the release archive's SHA-256 checksum, runs the TrustTunnel setup wizard, and prints the generated administrator password. To install from a working tree, run `sudo bash install.sh --source "$PWD"`. Use `--panel-only` to skip the wizard and configure the endpoint under **Server**. The installer also skips the wizard when no terminal is available. It uses TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9.
 
-По умолчанию панель доступна на [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/). Для входа с другой машины откройте SSH-туннель.
+The panel is available at [127.0.0.1:8080/ttui/](http://127.0.0.1:8080/ttui/) by default. To access it from another machine, open an SSH tunnel.
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 USER@SERVER
 ```
 
-В **Настройках** можно сменить путь, логин, пароль и публичный адрес VPN для экспорта. При размещении за HTTPS-прокси передавайте веб-путь панели целиком и включите HTTPS-only cookies. Привязку HTTP-сервера можно изменить через `TTUI_BIND` и `TTUI_PORT` в `/etc/default/ttui` с последующим перезапуском `ttui.service`.
+Under **Settings**, change the panel path, username, password, or public VPN address used for exports. When running behind an HTTPS proxy, forward the full panel path and enable HTTPS-only cookies. To change the HTTP bind address or port, set `TTUI_BIND` and `TTUI_PORT` in `/etc/default/ttui` and restart `ttui.service`.
 
-Для сброса входа следующая команда создаёт новый пароль и выводит действующий путь панели. Добавьте `--path /ttui`, чтобы сбросить и путь.
+The following command generates a new administrator password and prints the current panel path. Add `--path /ttui` to reset the path as well.
 
 ```bash
 sudo -u ttui env TTUI_STATE=/var/lib/ttui \
   /opt/ttui/venv/bin/python /opt/ttui/app.py --reset-login
 ```
 
-## Обновление
+## Updates
 
 ```bash
 ttui version
@@ -35,57 +35,57 @@ sudo ttui update
 sudo ttui update --version v0.1.0
 ```
 
-По умолчанию установщик выбирает стабильный релиз из GitHub Releases. Он сохраняет `/etc/trusttunnel`, `/var/lib/ttui`, системные drop-in-файлы и `/etc/default/ttui`. Активные службы перезапускаются, и VPN-соединения могут кратковременно прерваться. Если обновление завершается ошибкой, установщик восстанавливает прежние файлы программы и пытается заново поднять службы. Для явного возврата к более старому релизу добавьте `--allow-downgrade`. При переходе между версиями с разными форматами конфигурации восстановите совместимую резервную копию данных.
+The installer selects the latest stable GitHub release by default. It preserves `/etc/trusttunnel`, `/var/lib/ttui`, systemd drop-in files, and `/etc/default/ttui`. It restarts active services, which can briefly interrupt VPN connections. If the update fails, the installer restores the previous application files and attempts to restart the services. Add `--allow-downgrade` to install an older release explicitly. When switching between versions with different configuration formats, restore a compatible backup.
 
-У старых установок без команды `ttui` повторно запустите команду установки. Она обновит установленную панель и добавит команду для следующих обновлений.
+For an older installation without the `ttui` command, run the installer again. It updates the panel and installs the command for future updates.
 
-## Выпуск версий
+## Releases
 
-Разработка ведётся в ветке `dev`. GitHub Actions запускается при push в `dev` и `main`, а также для pull request. CI проверяет Python, JavaScript и Bash, устанавливает собранный архив на тестовом Linux и проверяет обновление и откат. Для стабильного релиза обновите `VERSION` и [CHANGELOG.md](CHANGELOG.md) в `dev`. После слияния проверенных изменений в `main` отправьте совпадающий тег SemVer с коммита в истории `main`.
+Work takes place on the `dev` branch. GitHub Actions runs on pushes to `dev` and `main`, and on pull requests. CI checks Python, JavaScript, and Bash, then tests installation, updates, and rollback on Linux. To prepare a stable release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md) on `dev`. After the reviewed changes reach `main`, push the matching SemVer tag from a commit in the history of `main`.
 
 ```bash
 git tag -a v0.1.0 -m "ttui v0.1.0"
 git push origin v0.1.0
 ```
 
-Workflow **Release** проверяет, что тег указывает на коммит в истории `main`, повторяет проверки и публикует архив, SHA-256 и bootstrap. Для сборки архива локально запустите `bash scripts/package.sh`. Архивы и история публикаций находятся в [GitHub Releases](https://github.com/smoothie-ws/ttui/releases).
+The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, and bootstrap script. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/smoothie-ws/ttui/releases).
 
-## Сервер и клиенты
+## Server and clients
 
-- **Клиенты**. Создайте учётную запись и откройте её действия, чтобы получить ссылку `tt://` для импорта или TOML для CLI. Смена пароля и удаление отзывают доступ после перезапуска сервера. Режим без клиентов доступен на loopback для локальной разработки.
-- **Домены**. Добавляйте TLS-хосты VPN, проверки доступности, теста скорости и reverse proxy. Укажите сертификат и ключ, доступные пользователю `ttui`. Редактируйте и удаляйте записи в `hosts.toml`. После обновления сертификатов выполните `sudo systemctl reload trusttunnel`. DNS и обновление PEM-файлов обслуживаются отдельно.
-- **Конфигурация**. Редактор открывает `vpn.toml`, `hosts.toml`, файл клиентов и файл фильтров. Доступны нативные настройки HTTP/1.1, HTTP/2, QUIC, таймаутов, IPv6, ICMP, метрик, reverse proxy, подписок и TLS-фильтров. Файлы клиентов и фильтров должны находиться внутри `/etc/trusttunnel`. Уровень и файл логов, число потоков и Sentry DSN доступны в **Параметрах запуска**.
-- Применение конфигурации перезапускает службы и может прервать соединения. Если запуск завершается ошибкой, панель восстанавливает предыдущие файлы и пытается поднять прежнюю конфигурацию. Для резервной копии сохраните `/etc/trusttunnel` и `/var/lib/ttui`.
+- **Clients.** Create a client and open its actions to export a `tt://` import link or TOML for the CLI. Rotating a password or deleting a client revokes its old access after the server restarts. An endpoint bound to loopback can run without clients for local development.
+- **Domains.** Add TLS hosts for VPN traffic, health checks, speed tests, and reverse proxies. Specify a certificate and key readable by `ttui`. Edit or remove entries in `hosts.toml`. After renewing a certificate, run `sudo systemctl reload trusttunnel`. Manage DNS and PEM renewal separately.
+- **Configuration.** The editor opens `vpn.toml`, `hosts.toml`, the client credentials file, and the connection filter file. It supports the native HTTP/1.1, HTTP/2, QUIC, timeout, IPv6, ICMP, metrics, reverse proxy, subscription, and TLS filtering settings. Keep the credentials and filter files inside `/etc/trusttunnel`. Use **Startup options** to set the log level, log file, thread count, and Sentry DSN.
+- Applying server configuration restarts services and may interrupt connections. If startup fails, the panel restores the previous files and attempts to restart the service. Back up both `/etc/trusttunnel` and `/var/lib/ttui`.
 
-Чтобы переключиться на существующий файл клиентов или фильтров, измените только его путь в `vpn.toml`. После сохранения редактор откроет содержимое подключённого файла. Общие настройки маршрутизации можно сохранить отключёнными до первичной настройки endpoint.
+To switch to an existing credentials or filter file, change only its path in `vpn.toml`. After saving, the editor opens the selected file. You can save routing settings with routing disabled before configuring the endpoint.
 
-Установщик останавливается, если находит существующую чужую службу `trusttunnel.service`. Для миграции сделайте резервную копию, перенесите конфигурацию и сертификаты в `/etc/trusttunnel`, проверьте пути и права пользователя `ttui`, затем выведите прежнюю службу из эксплуатации перед установкой. Повторная установка сохраняет конфигурацию endpoint, аккаунт панели, маршруты и загруженные геофайлы.
+The installer stops if it finds an unmanaged `trusttunnel.service`. To migrate an existing installation, back it up, move the configuration and certificates into `/etc/trusttunnel`, verify the paths and permissions for `ttui`, then retire the old service before installing. Reinstalling preserves the endpoint configuration, admin account, routing settings, and uploaded geodata files.
 
-[Настройки TrustTunnel Endpoint](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) · [Мастер и экспорт клиента](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
+[TrustTunnel Endpoint settings](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) · [Setup wizard and client exports](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/README.md)
 
-## Маршрутизация и каскады
+## Routing and cascades
 
-1. Добавьте выход. `direct` (Freedom) и `block` доступны сразу. Через форму можно добавить HTTP/SOCKS5-прокси или TrustTunnel. Произвольные выходы Xray задаются в JSON.
-2. Для каскада вставьте TOML, экспортированный удалённым TrustTunnel Endpoint, или полную конфигурацию CLI с таблицей `[endpoint]`. Каскаду требуются адрес и статические учётные данные удалённого endpoint. ttui запустит отдельный локальный SOCKS5 каждого каскада.
-3. Добавьте правила и расставьте их в порядке проверки. Первое совпадение определяет выход. Для остального трафика задайте выход по умолчанию. Все заданные поля одного правила должны совпасть.
-4. Включите маршрутизацию. TrustTunnel направит трафик в Xray через локальный SOCKS5. При отключении панель восстанавливает предыдущий `forward_protocol`.
+1. Add an outbound. The built-in `direct` (Freedom) and `block` (Blackhole) outbounds are available immediately. Use the form to add an HTTP or SOCKS5 proxy or a TrustTunnel outbound. Use JSON for other Xray outbound types.
+2. For a cascade, paste TOML exported by the remote TrustTunnel Endpoint or a full CLI configuration with an `[endpoint]` table. The cascade requires an address and static credentials for the remote endpoint. ttui starts a separate local SOCKS5 listener for each cascade.
+3. Add rules in evaluation order. The first match selects the outbound. Set a default outbound for the remaining traffic. All specified fields in a rule must match.
+4. Enable routing. TrustTunnel sends traffic to Xray through a local SOCKS5 listener. Disabling routing restores the previous `forward_protocol`.
 
-| Поле | Примеры |
+| Field | Examples |
 | --- | --- |
-| Домены | `domain:example.org`, `full:app.example.org`, `regexp:^.*\.example\.org$`, `geosite:category-ads-all`, `ext:custom-site.dat:group` |
+| Domains | `domain:example.org`, `full:app.example.org`, `regexp:^.*\.example\.org$`, `geosite:category-ads-all`, `ext:custom-site.dat:group` |
 | IP | `203.0.113.0/24`, `geoip:private`, `ext:custom-ip.dat:group` |
-| Порты | `80,443,1000-2000` |
+| Ports | `80,443,1000-2000` |
 
-Раздел **Геофайлы** принимает дополнительные базы Xray в формате `.dat`. Базовые `geosite.dat` и `geoip.dat` поставляются с Xray. JSON-редактор поддерживает расширенные поля правил, например `network`, и вложенные настройки выходов, включая `streamSettings`.
+Upload additional Xray `.dat` databases under **Geodata files**. Xray provides the default `geosite.dat` and `geoip.dat` files. The JSON editor supports advanced rule fields such as `network` and nested outbound settings such as `streamSettings`.
 
-Xray получает адрес назначения, порт и распознанное имя, когда оно доступно. Через общий вход SOCKS5 правила действуют на всех клиентов. Для соединений без доступного домена используйте IP-правила. Возможность передачи UDP зависит от выхода. HTTP-прокси обслуживает TCP.
+Xray receives the destination address, port, and hostname when available. Rules apply to all clients through the shared SOCKS5 inbound. Use IP rules for connections without an available hostname. UDP support depends on the outbound. HTTP proxies handle TCP.
 
-[Правила и геоданные Xray](https://xtls.github.io/en/config/routing.html) · [Выходы Xray](https://xtls.github.io/en/config/outbound.html) · [SOCKS5-режим TrustTunnel Client](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
+[Xray routing rules and geodata](https://xtls.github.io/en/config/routing.html) · [Xray outbounds](https://xtls.github.io/en/config/outbound.html) · [TrustTunnel Client SOCKS5 mode](https://github.com/TrustTunnel/TrustTunnelClient/blob/v1.3.0/trusttunnel/README.md)
 
-## Анализ интерфейсов
+## Design references
 
-| Источник | Что применяется в ttui |
+| Reference | How ttui uses it |
 | --- | --- |
-| [wg-easy](https://github.com/wg-easy/wg-easy) | Список клиентов как стартовая страница, экспорт в действиях клиента. |
-| [3x-ui](https://github.com/MHSanaei/3x-ui/blob/main/docs/content/docs/en/operations/outbounds-routing.mdx) | Именованные выходы, приоритет правил, геоданные и расширенное редактирование. |
-| [TrustTunnel Endpoint CLI](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) | Панель сохраняет нативные TOML-файлы и делегирует экспорт endpoint. Один SOCKS5-выход endpoint подключает отдельный маршрутизатор. |
+| [wg-easy](https://github.com/wg-easy/wg-easy) | The client list is the landing page, and exports are available from each client's actions. |
+| [3x-ui](https://github.com/MHSanaei/3x-ui/blob/main/docs/content/docs/en/operations/outbounds-routing.mdx) | Named outbounds, ordered rules, geodata, and advanced editing. |
+| [TrustTunnel Endpoint CLI](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) | ttui preserves the native TOML files and delegates exports to the endpoint. The endpoint sends traffic through one SOCKS5 outbound to a separate router. |
