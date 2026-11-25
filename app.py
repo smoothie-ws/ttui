@@ -11,6 +11,7 @@ import time
 from datetime import timedelta
 from functools import wraps
 from pathlib import Path
+from threading import Lock
 
 import tomlkit
 from flask import Flask, abort, flash, redirect, render_template, request, session, url_for
@@ -22,6 +23,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 import backend as b
 
 SETTINGS = b.STATE / "panel.json"
+VERSION = b.read(Path(__file__).with_name("VERSION"), "dev").strip()
 HOST_TYPES = {"main_hosts": "VPN", "ping_hosts": "Проверка доступности",
               "speedtest_hosts": "Проверка скорости", "reverse_proxy_hosts": "Reverse proxy"}
 FILE_KEYS = ("vpn", "hosts", "credentials", "rules")
@@ -31,10 +33,15 @@ app.config.update(MAX_CONTENT_LENGTH=64 * 1024 * 1024, MAX_FORM_MEMORY_SIZE=4 * 
                   SESSION_COOKIE_HTTPONLY=True,
                   SESSION_COOKIE_SAMESITE="Strict", PERMANENT_SESSION_LIFETIME=timedelta(hours=12))
 login_attempts = []
+login_lock = Lock()
 
 
 def settings():
     return json.loads(b.read(SETTINGS))
+
+
+def request_settings():
+    return request.environ.get("ttui.settings") or settings()
 
 
 class PanelSession(SecureCookieSessionInterface):
@@ -42,7 +49,7 @@ class PanelSession(SecureCookieSessionInterface):
         return request.script_root or "/"
 
     def get_cookie_secure(self, app):
-        return settings()["secure_cookie"]
+        return request_settings()["secure_cookie"]
 
 
 app.session_interface = PanelSession()
@@ -50,7 +57,8 @@ app.session_interface = PanelSession()
 
 def mounted_app(wsgi_app):
     def dispatch(environ, start_response):
-        base = settings()["path"]
+        config = environ["ttui.settings"] = settings()
+        base = config["path"]
         path = environ["PATH_INFO"]
         if base:
             if path != base and not path.startswith(base + "/"):
@@ -75,9 +83,8 @@ def session_id(config):
 def guard():
     if request.endpoint is None:
         return
-    if request.endpoint not in ("login", "static"):
-        if not hmac.compare_digest(session.get("auth", ""), session_id(settings())):
-            return redirect(url_for("login"))
+    if request.endpoint not in ("login", "static") and not authenticated(request_settings()):
+        return redirect(url_for("login"))
     if request.method == "POST":
         token = session.get("csrf", "")
         if not token or not hmac.compare_digest(request.form.get("csrf", "").encode(), token.encode()):
@@ -100,11 +107,19 @@ def template_context():
     return {"csrf": lambda: session.setdefault("csrf", secrets.token_urlsafe(32))}
 
 
+def authenticated(config):
+    return hmac.compare_digest(session.get("auth", ""), session_id(config))
+
+
 def action(page):
     def decorate(function):
         @wraps(function)
         def wrapped(*args, **kwargs):
             with b.LOCK:
+                if request.method == "POST" and "ttui.settings" in request.environ:
+                    request.environ["ttui.settings"] = config = settings()
+                    if not authenticated(config):
+                        return redirect(config["path"] + "/login")
                 try:
                     return function(*args, **kwargs)
                 except OPERATION_ERRORS as error:
@@ -114,10 +129,15 @@ def action(page):
     return decorate
 
 
+def saved(page, message):
+    flash(message)
+    return redirect(url_for(page))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        with b.LOCK:
+        with login_lock:
             now = time.monotonic()
             login_attempts[:] = [stamp for stamp in login_attempts if now - stamp < 60]
             if len(login_attempts) >= 10:
@@ -142,13 +162,19 @@ def logout():
     return redirect(url_for("login"))
 
 
-def vpn_files():
-    vpn_text = b.read(b.VPN, "")
-    vpn = tomlkit.parse(vpn_text)
-    cred, rules = b.related(vpn)
-    source = {"vpn": vpn_text, "hosts": b.read(b.HOSTS, ""),
-              "credentials": b.read(cred, ""), "rules": b.read(rules, "")}
-    return vpn, source
+def read_vpn():
+    return tomlkit.parse(b.read(b.VPN, ""))
+
+
+def server_sources():
+    raw = b.read(b.VPN, "")
+    try:
+        vpn = tomlkit.parse(raw)
+        paths = b.related(vpn)
+    except (ParseError, ValueError):
+        vpn, paths = {}, (b.CONFIG / "credentials.toml", b.CONFIG / "rules.toml")
+    return vpn, paths, dict(vpn=raw, hosts=b.read(b.HOSTS, ""),
+                            credentials=b.read(paths[0], ""), rules=b.read(paths[1], ""))
 
 
 def host_groups(raw):
@@ -170,10 +196,10 @@ def check_revision(raw):
 def index():
     with b.LOCK:
         try:
-            vpn, source = vpn_files()
-            entries = b.configured_clients(vpn, source["credentials"])
-            hosts = host_groups(source["hosts"]).get("main_hosts", [])
-            address = settings().get("address") or (hosts[0].get("hostname", "") if hosts else "")
+            vpn = read_vpn()
+            entries = b.configured_clients(vpn)
+            hosts = host_groups(b.read(b.HOSTS, "")).get("main_hosts", [])
+            address = request_settings().get("address") or (hosts[0].get("hostname", "") if hosts else "")
             initialized = bool(vpn.get("listen_address") and hosts)
             can_remove_last = b.loopback(vpn)
         except (ParseError, ValueError, OSError):
@@ -185,9 +211,9 @@ def index():
 @app.post("/clients")
 @action("index")
 def update_client():
-    vpn, source = vpn_files()
+    vpn = read_vpn()
     credentials, _ = b.related(vpn)
-    doc = tomlkit.parse(source["credentials"])
+    doc = tomlkit.parse(b.read(credentials, ""))
     entries = b.clients(doc)
     name = request.form.get("username", "").strip()
     operation = request.form.get("operation")
@@ -197,49 +223,39 @@ def update_client():
         if entries:
             raise ValueError("Подключите существующий файл клиентов в настройках сервера.")
     existing = next((entry for entry in entries if entry["username"] == name), None)
-    generated = None
+    password = None
+    if operation in ("create", "rotate"):
+        password = request.form.get("password") or secrets.token_urlsafe(24)
+        if len(password) > 512 or any(ord(c) < 32 for c in password):
+            raise ValueError("Пароль слишком длинный или содержит управляющие символы.")
     if operation == "create":
         if existing or not re.fullmatch(r"[^\s\x00-\x1f:]{1,64}", name):
             raise ValueError("Введите уникальное имя без пробелов и двоеточий, до 64 символов.")
         if "client" not in doc:
             doc["client"] = tomlkit.aot()
-        generated = request.form.get("password") or secrets.token_urlsafe(24)
-        doc["client"].append({"username": name, "password": generated})
+        doc["client"].append({"username": name, "password": password})
     elif operation == "rotate" and existing is not None:
-        generated = request.form.get("password") or secrets.token_urlsafe(24)
-        existing["password"] = generated
+        existing["password"] = password
     elif operation == "delete" and existing is not None:
         entries.remove(existing)
     else:
         raise ValueError("Клиент не найден.")
-    if generated and (len(generated) > 512 or any(ord(c) < 32 for c in generated)):
-        raise ValueError("Пароль слишком длинный или содержит управляющие символы.")
     changes = {credentials: tomlkit.dumps(doc)}
     if not vpn.get("credentials_file"):
         vpn["credentials_file"] = str(credentials.relative_to(b.CONFIG))
         changes[b.VPN] = tomlkit.dumps(vpn)
     b.apply_endpoint(changes, vpn)
-    flash("Клиенты обновлены.")
-    return redirect(url_for("index"))
+    return saved("index", "Клиенты обновлены.")
 
 
 @app.post("/export")
 @action("index")
 def export():
-    vpn, source = vpn_files()
     name = request.form.get("username", "")
-    if not any(entry["username"] == name for entry in b.configured_clients(vpn, source["credentials"])):
+    if not any(entry["username"] == name for entry in b.configured_clients(read_vpn())):
         raise ValueError("Клиент не найден.")
     return render_template("export.html", username=name, content=b.export_client(name, request.form),
                            fmt=request.form.get("format"))
-
-
-def current_sources():
-    try:
-        return vpn_files()[1]
-    except (ParseError, ValueError):
-        # Keep the primary files editable even if an imported vpn.toml is invalid.
-        return {key: b.read(b.CONFIG / f"{key}.toml", "") for key in FILE_KEYS}
 
 
 def render_server(source, version, error=None):
@@ -255,7 +271,7 @@ def render_server(source, version, error=None):
 @app.get("/server")
 @action("index")
 def server():
-    source = current_sources()
+    _, _, source = server_sources()
     return render_server(source, revision(source))
 
 
@@ -263,15 +279,9 @@ def server():
 @action("server")
 def save_server():
     data = {key: request.form.get(key, "").replace("\r\n", "\n").replace("\r", "\n") for key in FILE_KEYS}
-    previous = current_sources()
+    before, old_paths, previous = server_sources()
     check_revision(previous)
     try:
-        try:
-            before = tomlkit.parse(previous["vpn"])
-            old_paths = b.related(before)
-        except (ParseError, ValueError):
-            before = {}
-            old_paths = (b.CONFIG / "credentials.toml", b.CONFIG / "rules.toml")
         vpn = tomlkit.parse(data["vpn"])
         tomlkit.parse(data["hosts"])
         for key in ("credentials", "rules"):
@@ -292,8 +302,7 @@ def save_server():
         b.apply_endpoint(changes, vpn)
     except OPERATION_ERRORS as error:
         return render_server(data, request.form["revision"], str(error)), 400
-    flash("Конфигурация сохранена. TrustTunnel перезапущен.")
-    return redirect(url_for("server"))
+    return saved("server", "Конфигурация сохранена. TrustTunnel перезапущен.")
 
 
 @app.post("/launch")
@@ -302,16 +311,14 @@ def save_launch():
     options = {key: request.form.get(key, "").strip() for key in
                ("loglvl", "logfile", "jobs", "sentry_dsn")}
     b.endpoint_command(options)
-    vpn, _ = vpn_files()
-    b.apply_endpoint({b.LAUNCH: json.dumps(options, indent=2) + "\n"}, vpn)
-    flash("Параметры запуска сохранены.")
-    return redirect(url_for("server"))
+    b.apply_endpoint({b.LAUNCH: json.dumps(options, indent=2) + "\n"}, read_vpn())
+    return saved("server", "Параметры запуска сохранены.")
 
 
 @app.post("/hosts")
 @action("server")
 def add_host():
-    vpn, source = vpn_files()
+    vpn, _, source = server_sources()
     check_revision(source)
     hosts = tomlkit.parse(source["hosts"])
     group = request.form.get("group")
@@ -333,8 +340,7 @@ def add_host():
         hosts[group] = tomlkit.aot()
     hosts[group].append(record)
     b.apply_endpoint({b.HOSTS: tomlkit.dumps(hosts)}, vpn)
-    flash("Домен добавлен.")
-    return redirect(url_for("server"))
+    return saved("server", "Домен добавлен.")
 
 
 def render_routing(source, version, error=None):
@@ -361,8 +367,7 @@ def save_routing():
         b.apply_routing(json.loads(source))
     except OPERATION_ERRORS as error:
         return render_routing(source, request.form["revision"], str(error)), 400
-    flash("Маршрутизация сохранена.")
-    return redirect(url_for("routing"))
+    return saved("routing", "Маршрутизация сохранена.")
 
 
 @app.post("/geofiles")
@@ -371,19 +376,16 @@ def upload_geo():
     upload = request.files.get("data")
     if not upload or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.dat", upload.filename or ""):
         raise ValueError("Выберите файл Xray с расширением .dat.")
-    data = upload.read()
-    if not data:
+    if not upload.stream.read(1):
         raise ValueError("Файл пуст.")
-    b.replace_geofile(upload.filename, data)
-    flash("Геофайл сохранён.")
-    return redirect(url_for("routing"))
+    upload.stream.seek(0)
+    b.replace_geofile(upload.filename, upload.stream)
+    return saved("routing", "Геофайл сохранён.")
 
 
 @app.get("/settings")
 def panel_settings():
-    config = settings()
-    version = b.read(Path(__file__).with_name("VERSION"), "dev").strip()
-    return render_template("settings.html", config=config, version=version)
+    return render_template("settings.html", config=request_settings(), version=VERSION)
 
 
 def clean_path(value):
@@ -397,7 +399,7 @@ def clean_path(value):
 @app.post("/settings")
 @action("panel_settings")
 def save_settings():
-    config = settings()
+    config = request_settings().copy()
     form = request.form
     path = clean_path(form.get("path", "").strip())
     username = form.get("username", "").strip()
@@ -417,10 +419,10 @@ def save_settings():
         config["session_epoch"] = secrets.token_hex(16)
         session.clear()
     b.write_json(SETTINGS, config)
+    request.environ["ttui.settings"] = config
     if changed_login or path != old_path:
         return redirect(path + "/login")
-    flash("Настройки панели сохранены.")
-    return redirect(url_for("panel_settings"))
+    return saved("panel_settings", "Настройки панели сохранены.")
 
 
 def main():
@@ -437,9 +439,8 @@ def main():
     if args.routing_enabled:
         raise SystemExit(0 if b.load_routing()["enabled"] else 1)
     if args.run_endpoint:
-        vpn = tomlkit.parse(b.read(b.VPN))
-        credentials, _ = b.related(vpn)
-        b.check_clients(vpn, b.read(credentials, "") if vpn.get("credentials_file") else "")
+        vpn = read_vpn()
+        b.check_clients(vpn)
         command_line = b.endpoint_command(b.launch_options())
         os.chdir(b.CONFIG)
         os.execv(b.ENDPOINT, command_line)

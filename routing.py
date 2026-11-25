@@ -2,9 +2,11 @@
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -108,53 +110,50 @@ def wait_listener(port, process, timeout=12):
 
 
 def run_router(state, xray, client_binary):
-    from contextlib import ExitStack
-
     spec = json.loads((state / "routing.json").read_text(encoding="utf-8"))
     config, cascades = compile_routing(spec)
     if not spec["enabled"]:
         raise RuntimeError("Маршрутизация отключена.")
-    processes = []
+    processes = {}
+    env = xray_env(state / "geo")
 
-    def start(command, port):
-        process = subprocess.Popen(command, cwd=state, env=xray_env(state / "geo"))
-        processes.append(process)
-        wait_listener(port, process)
+    def stop(*_):
+        sys.exit(0)
 
-    with ExitStack() as stack:
-        import tempfile
-        import signal
-        work = Path(stack.enter_context(tempfile.TemporaryDirectory(dir=state)))
+    def start(port, *args):
+        processes[port] = subprocess.Popen(args, cwd=state, env=env)
 
-        def cleanup():
-            for process in reversed(processes):
+    signal.signal(signal.SIGTERM, stop)
+    with tempfile.TemporaryDirectory(dir=state) as directory:
+        work = Path(directory)
+        try:
+            for port, data in cascades.items():
+                path = work / f"cascade-{port}.toml"
+                path.write_text(data, encoding="utf-8")
+                start(port, client_binary, "--config", str(path))
+            path = work / "xray.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            start(int(ROUTER_ADDRESS.rsplit(":", 1)[1]), xray, "run", "-c", str(path))
+            deadline = time.monotonic() + 50
+            for port, process in processes.items():
+                wait_listener(port, process, max(0, deadline - time.monotonic()))
+            if address := os.environ.get("NOTIFY_SOCKET"):
+                with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+                    notify.sendto(b"READY=1", "\0" + address[1:] if address.startswith("@") else address)
+            while all(process.poll() is None for process in processes.values()):
+                time.sleep(0.5)
+            raise RuntimeError("Процесс Xray или TrustTunnel Client завершился.")
+        finally:
+            for process in processes.values():
                 if process.poll() is None:
                     process.terminate()
-            for process in reversed(processes):
+            deadline = time.monotonic() + 3
+            for process in processes.values():
                 try:
-                    process.wait(timeout=3)
+                    process.wait(timeout=max(0, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-
-        def stop(*_):
-            sys.exit(0)
-
-        signal.signal(signal.SIGTERM, stop)
-        stack.callback(cleanup)
-        for port, data in cascades.items():
-            path = work / f"cascade-{port}.toml"
-            path.write_text(data, encoding="utf-8")
-            start([client_binary, "--config", str(path)], port)
-        path = work / "xray.json"
-        path.write_text(json.dumps(config), encoding="utf-8")
-        start([xray, "run", "-c", str(path)], int(ROUTER_ADDRESS.rsplit(":", 1)[1]))
-        if address := os.environ.get("NOTIFY_SOCKET"):
-            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
-                notify.sendto(b"READY=1", "\0" + address[1:] if address.startswith("@") else address)
-        while all(process.poll() is None for process in processes):
-            time.sleep(0.5)
-        raise RuntimeError("Процесс Xray или TrustTunnel Client завершился.")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ class PanelTest(unittest.TestCase):
             "password_hash": generate_password_hash("correct-password", method="pbkdf2:sha256:1000"),
             "secure_cookie": False,
         }
-        with patch.object(panel, "settings", return_value=config), patch.dict(
+        with patch.object(panel, "settings", return_value=config) as load_settings, patch.dict(
             panel.app.config, SECRET_KEY=config["secret"]
         ):
             client = panel.app.test_client()
@@ -31,7 +31,9 @@ class PanelTest(unittest.TestCase):
             data["csrf"] = re.search(rb'name="csrf" value="([^"]+)"', response.data)[1].decode()
             self.assertEqual(client.post(login, data=data).status_code, 302)
             version = (panel.Path(panel.__file__).parent / "VERSION").read_bytes().strip()
+            load_settings.reset_mock()
             self.assertIn(b"ttui " + version, client.get(settings).data)
+            load_settings.assert_called_once()
 
     def test_routing_preserves_priority_and_default(self):
         rules = [{"domain": [r"regexp:^test\.example$"], "outboundTag": "direct"},

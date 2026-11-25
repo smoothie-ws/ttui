@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Клиенты{% endblock %}
 {% block content %}
-<div class="page-title">
-  <div><h1>Клиенты</h1><p class="subtle">Доступ к TrustTunnel и импорт подключения.</p></div>
-  <span class="status {% if endpoint == 'active' %}online{% endif %}">TrustTunnel · {{ 'работает' if endpoint == 'active' else 'остановлен' }}</span>
-</div>
+{{ heading('Клиенты', 'Доступ к TrustTunnel и импорт подключения.', 'TrustTunnel', endpoint) }}
 {% if not initialized %}
 <p class="notice">Укажите адрес прослушивания и TLS-хост в разделе <a href="{{ url_for('server') }}">Сервер</a>.</p>
 {% endif %}

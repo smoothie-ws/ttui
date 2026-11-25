@@ -1,4 +1,4 @@
-import json
+from io import BytesIO
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +27,7 @@ class ConfigTest(unittest.TestCase):
             self.start_patch(patch.object(b, key, path))
         self.service = self.start_patch(patch.object(b, "service"))
         self.status = self.start_patch(patch.object(b, "service_state", return_value="inactive"))
+        self.real_active_endpoint = b.active_endpoint
         self.active = self.start_patch(patch.object(b, "active_endpoint"))
         self.validate = self.start_patch(patch.object(b, "validate_xray"))
 
@@ -93,9 +94,17 @@ class ConfigTest(unittest.TestCase):
         self.status.return_value = "active"
         self.validate.side_effect = RuntimeError("invalid")
         with self.assertRaisesRegex(RuntimeError, "invalid"):
-            b.replace_geofile(data.name, b"new")
+            b.replace_geofile(data.name, BytesIO(b"new"))
         self.assertEqual(data.read_bytes(), b"old")
         self.service.assert_not_called()
+
+    def test_readiness_rejects_restarting_endpoint(self):
+        running = "ActiveState=active\nMainPID=123\n"
+        with patch.object(b.time, "sleep"), \
+                patch.object(b, "command", side_effect=[running, running.replace("123", "456")]) as command:
+            with self.assertRaisesRegex(RuntimeError, "TrustTunnel"):
+                self.real_active_endpoint()
+        self.assertEqual(command.call_count, 2)
 
     def test_write_failure_rolls_back_without_touching_services(self):
         self.write_vpn()
@@ -127,8 +136,8 @@ class ConfigTest(unittest.TestCase):
             with client.session_transaction() as session:
                 session["auth"] = panel.session_id(config)
                 session["csrf"] = "token"
-            data = {**panel.current_sources(), "csrf": "token"}
-            data["revision"] = panel.revision(panel.current_sources())
+            data = {**panel.server_sources()[2], "csrf": "token"}
+            data["revision"] = panel.revision(panel.server_sources()[2])
             data["vpn"] = vpn.replace("old.toml", "new.toml")
             edited = {**data, "credentials": old.replace("secret", "changed")}
             self.assertEqual(client.post("/ttui/server", data=edited).status_code, 400)
@@ -143,7 +152,7 @@ class ConfigTest(unittest.TestCase):
         (b.CONFIG / "old.toml").write_text("invalid = [", encoding="utf-8")
         new = '[[client]]\nusername = "new"\npassword = "secret"\n'
         (b.CONFIG / "new.toml").write_text(new, encoding="utf-8")
-        source = panel.current_sources()
+        source = panel.server_sources()[2]
         with patch.dict(panel.app.config, SECRET_KEY="secret"), panel.app.test_request_context("/server", method="POST", data={
             **source, "vpn": vpn.replace("old.toml", "new.toml"), "revision": panel.revision(source),
         }):

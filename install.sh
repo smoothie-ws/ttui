@@ -261,21 +261,18 @@ main() {
             echo "No terminal for the TrustTunnel wizard. Configure the endpoint via the Server tab."
         fi
     fi
-    if (( updating )); then
-        for unit in "${active[@]}"; do
-            systemctl restart "$unit"
-            wait_service "$unit"
-        done
-    else
+    if (( ! updating )); then
         runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init
         systemctl enable ttui.service trusttunnel.service
-        systemctl restart ttui.service
-        wait_service ttui.service
+        active=(ttui.service)
         if [[ -f "$config/vpn.toml" && -f "$config/hosts.toml" ]]; then
-            systemctl restart trusttunnel.service
-            wait_service trusttunnel.service
+            active+=(trusttunnel.service)
         fi
     fi
+    for unit in "${active[@]}"; do
+        systemctl restart "$unit"
+        wait_service "$unit"
+    done
     ln -sfn "$panel/install.sh" "$launcher"
     )
     echo "ttui $target installed."

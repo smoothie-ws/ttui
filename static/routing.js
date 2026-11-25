@@ -18,13 +18,19 @@ function node(tag, text, className) {
   return element;
 }
 
+function edit(element, handler) {
+  element.onclick = () => {
+    if (!collect()) return;
+    handler();
+    redraw();
+  };
+  return element;
+}
+
 function button(text, handler) {
   const element = node("button", text);
   element.type = "button";
-  element.addEventListener("click", () => {
-    if (collect()) handler();
-  });
-  return element;
+  return edit(element, handler);
 }
 
 function field(container, title, element) {
@@ -93,16 +99,14 @@ function redraw() {
     const tag = input(top, "Имя выхода", outbound.tag, "proxy");
     const kind = Object.hasOwn(customProtocols, outbound.protocol) ? outbound.protocol : "xray";
     const protocol = field(top, "Тип", options(node("select"), customProtocols, kind));
-    top.append(button("Удалить", () => {
-      spec.outbounds.splice(index, 1);
-      redraw();
-    }));
+    top.append(button("Удалить", () => spec.outbounds.splice(index, 1)));
     let address, port, user, password, advanced;
     const server = outbound.settings?.servers?.[0];
     const proxy = ["socks", "http"].includes(kind);
-    const emptyProxy = Object.keys(outbound).every((key) => ["tag", "protocol"].includes(key));
+    const {tag: _tag, protocol: _protocol, ...extra} = outbound;
+    const emptyProxy = !Object.keys(extra).length;
     const simple = proxy && outbound.settings?.servers?.length === 1
-      && Object.keys(outbound).every((key) => ["tag", "protocol", "settings"].includes(key))
+      && Object.keys(extra).length === 1
       && Object.keys(outbound.settings).every((key) => key === "servers")
       && Object.keys(server ?? {}).every((key) => ["address", "port", "users"].includes(key))
       && (!server?.users || (server.users.length <= 1
@@ -119,8 +123,7 @@ function redraw() {
     } else if (kind === "trusttunnel") {
       advanced = input(box, "TOML удалённого endpoint", outbound.config, "Вставьте экспорт TOML из TrustTunnel", true);
     } else if (kind === "xray" || proxy || Object.keys(outbound).length > 2) {
-      const {tag: _tag, ...configuration} = outbound;
-      advanced = input(box, "Параметры выхода Xray (JSON)", JSON.stringify(configuration, null, 2), "", true);
+      advanced = input(box, "Параметры выхода Xray (JSON)", JSON.stringify({protocol: _protocol, ...extra}, null, 2), "", true);
     }
     tag.addEventListener("change", () => {
       if (!collect()) return;
@@ -177,15 +180,11 @@ function redraw() {
     for (const [delta, label] of [[-1, "Выше"], [1, "Ниже"]]) {
       const move = button(label, () => {
         [spec.rules[index], spec.rules[index + delta]] = [spec.rules[index + delta], spec.rules[index]];
-        redraw();
       });
       move.disabled = index + delta < 0 || index + delta >= spec.rules.length;
       actions.append(move);
     }
-    actions.append(button("Удалить", () => {
-      spec.rules.splice(index, 1);
-      redraw();
-    }));
+    actions.append(button("Удалить", () => spec.rules.splice(index, 1)));
     const domains = input(box, "Домены, по одному на строку", rule.domain?.join("\n"), "regexp:^.*\\.example\\.org$", true);
     const ips = input(box, "IP и CIDR, по одному на строку", rule.ip?.join("\n"), "geoip:private", true);
     domains.rows = ips.rows = 2;
@@ -228,16 +227,8 @@ function load() {
 for (const id of ["routing-enabled", "routing-default", "routing-strategy"]) {
   find(id).addEventListener("change", collect);
 }
-find("add-outbound").addEventListener("click", () => {
-  if (!collect()) return;
-  spec.outbounds.push({tag: "", protocol: "socks"});
-  redraw();
-});
-find("add-rule").addEventListener("click", () => {
-  if (!collect()) return;
-  spec.rules.push({outboundTag: spec.default});
-  redraw();
-});
+edit(find("add-outbound"), () => spec.outbounds.push({tag: "", protocol: "socks"}));
+edit(find("add-rule"), () => spec.rules.push({outboundTag: spec.default}));
 source.addEventListener("input", () => {
   editor.inert = true;
   error.textContent = "JSON изменён. Загрузите его в редактор, чтобы продолжить работу с формой.";

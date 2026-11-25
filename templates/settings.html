@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Настройки{% endblock %}
 {% block content %}
-<div class="page-title"><div><h1>Настройки</h1><p class="subtle">Веб-доступ и параметры администратора.</p></div><span class="status">ttui {{ version }}</span></div>
+{{ heading('Настройки', 'Веб-доступ и параметры администратора.', 'ttui ' ~ version) }}
 <section class="card">
   <form class="stack" method="post" action="{{ url_for('save_settings') }}">
     {{ token() }}

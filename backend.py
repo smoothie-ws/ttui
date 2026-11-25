@@ -3,6 +3,7 @@ import json
 from ipaddress import ip_address
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -41,7 +42,10 @@ def atomic(path, data):
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as file:
         temporary = Path(file.name)
         try:
-            file.write(data)
+            if isinstance(data, bytes):
+                file.write(data)
+            else:
+                shutil.copyfileobj(data, file, length=128 * 1024)
             file.close()
             temporary.replace(path)
         finally:
@@ -73,13 +77,13 @@ def service_state(unit):
 
 
 def active_endpoint():
-    deadline = time.monotonic() + 2
-    while True:
-        if service_state(ENDPOINT_UNIT) != "active":
-            raise RuntimeError("TrustTunnel завершился при запуске. Проверьте journalctl -u trusttunnel.")
-        if time.monotonic() >= deadline:
+    args = [SYSTEMCTL, "show", "-p", "MainPID", "-p", "ActiveState", ENDPOINT_UNIT]
+    initial = set(command(args, timeout=3).splitlines())
+    if "ActiveState=active" in initial and any(re.fullmatch(r"MainPID=[1-9][0-9]*", item) for item in initial):
+        time.sleep(2)
+        if initial == set(command(args, timeout=3).splitlines()):
             return
-        time.sleep(0.25)
+    raise RuntimeError("TrustTunnel завершился при запуске. Проверьте journalctl -u trusttunnel.")
 
 
 def managed_path(value, fallback):
@@ -122,11 +126,13 @@ def loopback(vpn):
         return False
 
 
-def configured_clients(vpn, raw):
-    return clients(tomlkit.parse(raw)) if vpn.get("credentials_file") else []
+def configured_clients(vpn, raw=None):
+    if not vpn.get("credentials_file"):
+        return []
+    return clients(tomlkit.parse(read(related(vpn)[0], "") if raw is None else raw))
 
 
-def check_clients(vpn, raw):
+def check_clients(vpn, raw=None):
     if not configured_clients(vpn, raw) and not loopback(vpn):
         raise ValueError("Для endpoint вне loopback нужны credentials_file и хотя бы один клиент.")
 
@@ -194,10 +200,7 @@ def change_files(changes, apply, recover):
 
 def apply_endpoint(changes, vpn):
     credentials, rules = related(vpn)
-    raw = ""
-    if vpn.get("credentials_file"):
-        raw = changes[credentials] if credentials in changes else read(credentials, "")
-    check_clients(vpn, raw)
+    check_clients(vpn, changes.get(credentials))
     if vpn.get("rules_file") and not (rules in changes or rules.is_file()):
         raise ValueError("Указанный файл фильтров отсутствует.")
     if load_routing()["enabled"]:
@@ -223,8 +226,7 @@ def apply_routing(spec):
         write_json(ROUTING, spec)
         return
     vpn = tomlkit.parse(read(VPN))
-    credentials, _ = related(vpn)
-    check_clients(vpn, read(credentials, "") if vpn.get("credentials_file") else "")
+    check_clients(vpn)
     if old["enabled"]:
         spec["_native_forward"] = old.get("_native_forward")
     elif spec["enabled"]:
@@ -245,24 +247,20 @@ def apply_routing(spec):
         changes[VPN] = tomlkit.dumps(vpn)
     endpoint_active = service_state(ENDPOINT_UNIT) == "active"
     router_active = service_state(ROUTER_UNIT) == "active"
-    restart_router = spec["enabled"] and (endpoint_active or router_active)
-    restart_endpoint = VPN in changes and endpoint_active
-    stop_router = not spec["enabled"] and router_active
     touched = []
-
-    def update_service(action, unit):
-        touched.append(unit)
-        service(action, unit)
-        if action == "restart" and unit == ENDPOINT_UNIT:
-            active_endpoint()
+    steps = [
+        (spec["enabled"] and (endpoint_active or router_active), "restart", ROUTER_UNIT),
+        (VPN in changes and endpoint_active, "restart", ENDPOINT_UNIT),
+        (not spec["enabled"] and router_active, "stop", ROUTER_UNIT),
+    ]
 
     def apply():
-        if restart_router:
-            update_service("restart", ROUTER_UNIT)
-        if restart_endpoint:
-            update_service("restart", ENDPOINT_UNIT)
-        if stop_router:
-            update_service("stop", ROUTER_UNIT)
+        for needed, action, unit in steps:
+            if needed:
+                touched.append(unit)
+                service(action, unit)
+                if unit == ENDPOINT_UNIT:
+                    active_endpoint()
 
     def recover():
         if ROUTER_UNIT in touched and router_active:

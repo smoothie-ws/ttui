@@ -10,6 +10,12 @@
 </head>
 <body>
 {% macro token() %}<input type="hidden" name="csrf" value="{{ csrf() }}">{% endmacro %}
+{% macro heading(title, description, badge='', state=none) %}
+<div class="page-title">
+  <div><h1>{{ title }}</h1><p class="subtle">{{ description }}</p></div>
+  {% if badge %}<span class="status{% if state == 'active' %} online{% endif %}">{{ badge }}{% if state is not none %} · {{ 'работает' if state == 'active' else 'остановлен' }}{% endif %}</span>{% endif %}
+</div>
+{% endmacro %}
 {% if request.endpoint != 'login' %}
 <header class="top">
   <div class="top-inner">

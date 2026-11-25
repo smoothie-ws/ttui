@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Экспорт подключения{% endblock %}
 {% block content %}
-<div class="page-title"><div><h1>Подключение {{ username }}</h1><p class="subtle">Содержит пароль клиента. Передайте данные по защищённому каналу.</p></div></div>
+{{ heading('Подключение ' ~ username, 'Содержит пароль клиента. Передайте данные по защищённому каналу.') }}
 <section class="card stack">
   <label>{{ 'Конфигурация TOML' if fmt == 'toml' else 'Ссылка tt://' }}
     <textarea id="export-value" class="code" rows="{{ 14 if fmt == 'toml' else 4 }}" readonly spellcheck="false">{{ content }}</textarea>

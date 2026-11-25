@@ -2,10 +2,7 @@
 {% block title %}Маршрутизация{% endblock %}
 {% block scripts %}<script defer src="{{ url_for('static', filename='routing.js') }}"></script>{% endblock %}
 {% block content %}
-<div class="page-title">
-  <div><h1>Маршрутизация</h1><p class="subtle">Первое совпавшее правило выбирает выход.</p></div>
-  <span class="status {% if router == 'active' %}online{% endif %}">Xray · {{ 'работает' if router == 'active' else 'остановлен' }}</span>
-</div>
+{{ heading('Маршрутизация', 'Первое совпавшее правило выбирает выход.', 'Xray', router) }}
 {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
 <form id="routing-form" class="stack" method="post" action="{{ url_for('save_routing') }}">
   {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
