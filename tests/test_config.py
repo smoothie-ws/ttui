@@ -182,13 +182,15 @@ class ConfigTest(unittest.TestCase):
             metrics["address"] = "[::1]:1987"
             response = connect.return_value.getresponse.return_value.__enter__.return_value
             response.status = 200
-            response.read.return_value = json.dumps([
-                {"username": "laptop", "sessions": 0, "inbound": 1024, "outbound": 0, "ip": "2001:db8::1"},
-                {"username": "bad", "sessions": True, "inbound": 0, "outbound": 0},
-            ]).encode()
+            entry = {"username": "laptop", "sessions": 0, "inbound": 1024, "outbound": 0, "ip": "2001:db8::1"}
+            response.read.return_value = json.dumps([entry]).encode()
             self.assertEqual(client_statistics(vpn), {"laptop": {"sessions": 0, "inbound": 1024, "outbound": 0,
                                                                 "ip": "2001:db8::1"}})
             connect.assert_called_once_with("::1", 1987, timeout=0.75)
+            response.read.return_value = json.dumps([entry, {**entry, "sessions": True}]).encode()
+            self.assertIsNone(client_statistics(vpn))
+            response.read.return_value = json.dumps([entry, entry]).encode()
+            self.assertIsNone(client_statistics(vpn))
 
     def test_client_list_paginates_filtered_matches(self):
         b.VPN.write_text('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n', encoding="utf-8")

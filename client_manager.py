@@ -43,9 +43,10 @@ def client_statistics(vpn):
         rows = {}
         for item in clients:
             if (not isinstance(item, dict) or not isinstance(item.get("username"), str)
+                    or not item["username"] or item["username"] in rows
                     or any(type(item.get(key)) is not int or not 0 <= item[key] <= 2**64 - 1
                            for key in ("sessions", "inbound", "outbound"))):
-                continue
+                return None
             row = {key: item[key] for key in ("sessions", "inbound", "outbound")}
             try:
                 row["ip"] = str(ip_address(item.get("ip"))) if isinstance(item.get("ip"), str) else None

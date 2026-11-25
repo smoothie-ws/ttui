@@ -62,6 +62,8 @@ class BackupsTest(unittest.TestCase):
         with ZipFile(backups.archive_path(name)) as archive:
             self.assertEqual(set(archive.namelist()), {"config/vpn.toml", "config/hosts.toml", "config/tls-chain.pem",
                                                         backups.MANIFEST})
+            manifest = json.loads(archive.read(backups.MANIFEST))
+            self.assertEqual(manifest["external_tls_files"], [str(external.resolve())])
 
     def test_reject_tampered_archive_without_leaving_generated_copy(self):
         (self.state / "panel.json").write_bytes(b"{}")

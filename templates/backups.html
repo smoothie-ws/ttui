@@ -50,6 +50,10 @@
     {% if archive %}
     <p class="subtle">{{ archive['created'] }} · ttui {{ archive['version'] }} · {{ archive['files']|length }} files{% if archive.get('reason') == 'scheduled' %} · Scheduled{% elif archive.get('reason') == 'pre-update' %} · Before update{% elif archive.get('reason') == 'pre-config' %} · Before configuration change{% endif %}</p>
     <p class="subtle">{% for key in archive['components'] %}{{ components[key] }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% if archive.get('external_tls_files') %}
+    <p class="notice">TLS files outside the managed configuration directory require a separate backup.</p>
+    <ul>{% for path in archive['external_tls_files'] %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+    {% endif %}
     {% else %}
     <p class="notice error">The archive manifest could not be read.</p>
     {% endif %}

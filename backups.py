@@ -137,6 +137,12 @@ def create(selected, version, reason="manual"):
     root = location()
     manifest = {"format": 1, "version": version, "created": now.isoformat(timespec="seconds"), "reason": reason,
                 "components": sorted(selected), "files": {}}
+    if "endpoint" in selected:
+        hosts = tomlkit.parse(b.read(b.HOSTS, ""))
+        external = sorted({str(path) for _, paths in host_files(hosts) for path in paths
+                           if not path.is_relative_to(b.CONFIG)})
+        if external:
+            manifest["external_tls_files"] = external
     remaining = MAX_BYTES
     with NamedTemporaryFile(dir=root, prefix=".snapshot-", delete=False) as output:
         temporary = Path(output.name)
