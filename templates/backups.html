@@ -54,6 +54,9 @@
     <p class="notice">TLS files outside the managed configuration directory require a separate backup.</p>
     <ul>{% for path in archive['external_tls_files'] %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
     {% endif %}
+    {% if archive.get('certbot_manual_restore') %}
+    <p class="notice">This archive includes Certbot configuration in <code>state/certbot-config.tar.gz</code>. Restore it separately to <code>/var/lib/ttui/acme</code> before restoring the Endpoint.</p>
+    {% endif %}
     {% else %}
     <p class="notice error">The archive manifest could not be read.</p>
     {% endif %}

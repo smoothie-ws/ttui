@@ -63,7 +63,7 @@ For an older installation without the `ttui` command, run the installer again. I
 
 ## Backups
 
-Use **Backups** to select configuration components, create a ZIP archive, verify its SHA-256 checksums, and download a copy. ttui stores archives under `/var/lib/ttui/backups` with private permissions. Archives include passwords and private keys. Keep off-server copies in protected storage. Retain a separate backup of certificate files stored outside `/etc/trusttunnel`, including `/var/lib/ttui/acme` for VPN certificates issued by Certbot.
+Use **Backups** to select configuration components, create a ZIP archive, verify its SHA-256 checksums, and download a copy. ttui stores archives under `/var/lib/ttui/backups` with private permissions. Archives include passwords and private keys. Keep off-server copies in protected storage. Endpoint backups include Certbot configuration in `state/certbot-config.tar.gz` when available. Restore that archive separately to `/var/lib/ttui/acme` before restoring the Endpoint. Retain a separate backup of other certificate files stored outside `/etc/trusttunnel`.
 
 Import a trusted ttui archive in **Backups**, then select **Restore** and confirm with your current administrator password. Browser imports must fit within the panel's 64 MiB request limit. Restoring replaces the matching managed files. Active services may restart, and ttui restores the previous files if they fail to start. A full Endpoint snapshot can also start a stopped Endpoint. Restoring panel settings signs out existing sessions and switches to the archived panel path and login credentials.
 

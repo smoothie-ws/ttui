@@ -2,9 +2,11 @@
 import hashlib
 import json
 import os
+import posixpath
 import re
 import secrets
 import stat
+import tarfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -153,6 +155,48 @@ def create(selected, version, reason="manual"):
                         details = digest(stream, entry, remaining)
                     manifest["files"][member] = details
                     remaining -= details["size"]
+                certbot = b.STATE / "acme" / "config"
+                if "endpoint" in selected and (certbot.is_symlink() or certbot.exists() and not certbot.is_dir()):
+                    raise ValueError("Certbot configuration must be a local directory.")
+                if "endpoint" in selected and certbot.is_dir() and not certbot.is_symlink():
+                    total = 0
+                    count = 0
+
+                    def walk_error(error):
+                        raise error
+
+                    for directory, folders, names in os.walk(certbot, followlinks=False, onerror=walk_error):
+                        for entry_name in folders + names:
+                            path = Path(directory) / entry_name
+                            info = path.lstat()
+                            count += 1
+                            if stat.S_ISREG(info.st_mode):
+                                total += info.st_size
+                            elif stat.S_ISLNK(info.st_mode):
+                                link = os.readlink(path)
+                                if os.path.isabs(link) or not path.resolve().is_relative_to(certbot.resolve()):
+                                    raise ValueError("Certbot configuration contains a symbolic link outside its directory.")
+                            elif not stat.S_ISDIR(info.st_mode):
+                                raise ValueError("Certbot configuration contains an unsupported file type.")
+                            if count > 10000 or total > remaining:
+                                raise ValueError("Certbot configuration exceeds the supported size or file count.")
+                    with TemporaryDirectory(dir=root, prefix=".certbot-") as directory:
+                        snapshot = Path(directory) / "config.tar.gz"
+                        with tarfile.open(snapshot, "w:gz", dereference=False, errorlevel=2) as tar:
+                            tar.add(certbot, arcname="config")
+                        validate_certbot_archive(snapshot)
+                        member = "state/certbot-config.tar.gz"
+                        with snapshot.open("rb") as stream, archive.open(member, "w") as entry:
+                            details = digest(stream, entry, remaining)
+                        manifest["files"][member] = details
+                        manifest["certbot_manual_restore"] = True
+                        certbot_root = certbot.resolve()
+                        external = [value for value in manifest.get("external_tls_files", [])
+                                    if not Path(value).is_relative_to(certbot_root)]
+                        if external:
+                            manifest["external_tls_files"] = external
+                        else:
+                            manifest.pop("external_tls_files", None)
                 metadata = json.dumps(manifest, indent=2).encode("utf-8")
                 if len(metadata) > MAX_MANIFEST:
                     raise ValueError("Backup manifest exceeds the supported size.")
@@ -188,6 +232,11 @@ def read_manifest(archive):
     if (not isinstance(external, list) or len(external) > MAX_FILES
             or any(not isinstance(path, str) or len(path) > 4096 for path in external)):
         raise ValueError("Backup TLS metadata is invalid.")
+    certbot_member = "state/certbot-config.tar.gz"
+    certbot_present = certbot_member in data["files"]
+    if (data.get("certbot_manual_restore", False) is not certbot_present
+            or certbot_present and "endpoint" not in components):
+        raise ValueError("Backup Certbot metadata is invalid.")
     if sum(entry.file_size for entry in entries if entry.filename != MANIFEST) > MAX_BYTES:
         raise ValueError("Backup exceeds the supported size.")
     return data
@@ -210,9 +259,54 @@ def verify_file(path, stage=None):
                 if actual != expected:
                     raise ValueError("Backup checksums do not match the manifest.")
                 remaining -= actual["size"]
+            if manifest.get("certbot_manual_restore"):
+                member = "state/certbot-config.tar.gz"
+                if stage is not None:
+                    validate_certbot_archive(staged[member])
+                else:
+                    with TemporaryDirectory(dir=location(), prefix=".certbot-check-") as directory:
+                        temporary = Path(directory) / "config.tar.gz"
+                        with archive.open(member) as source, temporary.open("xb") as output:
+                            digest(source, output)
+                        validate_certbot_archive(temporary)
     except (BadZipFile, CompressionError, KeyError, UnicodeError, NotImplementedError) as error:
         raise ValueError("The backup archive is damaged or unsupported.") from error
     return manifest, staged
+
+
+def validate_certbot_archive(path):
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            total = 0
+            seen = set()
+            links = set()
+            for index, member in enumerate(archive):
+                parts = member.name.split("/")
+                if (index >= 10000 or parts[0] != "config" or any(part in ("", ".", "..") for part in parts)
+                        or any("\\" in part or ":" in part for part in parts)
+                        or member.name in seen
+                        or member.name == "config" and not member.isdir()
+                        or not (member.isdir() or member.isfile() or member.issym())):
+                    raise ValueError("Invalid Certbot archive entry.")
+                seen.add(member.name)
+                total += member.size
+                if total > MAX_BYTES:
+                    raise ValueError("Certbot archive exceeds the supported size.")
+                if member.issym():
+                    target = member.linkname
+                    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(member.name), target))
+                    if (posixpath.isabs(target) or "\\" in target or ":" in target
+                            or not resolved.startswith("config/")):
+                        raise ValueError("Invalid Certbot archive symbolic link.")
+                    links.add(member.name)
+            for name in seen:
+                parts = name.split("/")
+                if any("/".join(parts[:index]) in links for index in range(1, len(parts))):
+                    raise ValueError("Certbot archive entries cannot be nested under symbolic links.")
+            if "config" not in seen:
+                raise ValueError("Certbot archive is missing its configuration directory.")
+    except (tarfile.TarError, OSError, EOFError, CompressionError) as error:
+        raise ValueError("The Certbot archive is damaged.") from error
 
 
 def verify(name):
@@ -344,6 +438,7 @@ def validate_restore(changes, components, current, client_address=None):
 def restore(name, current, client_address=None):
     with TemporaryDirectory(dir=location(), prefix=".restore-") as directory:
         manifest, staged = verify_file(archive_path(name), Path(directory))
+        staged.pop("state/certbot-config.tar.gz", None)
         changes = destinations(staged)
         result = validate_restore(changes, set(manifest["components"]), current, client_address)
         path, endpoint_changed, routing_changed, config = result

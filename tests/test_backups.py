@@ -1,6 +1,8 @@
 import json
+import hashlib
 import os
 import stat
+import tarfile
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -49,6 +51,214 @@ class BackupsTest(unittest.TestCase):
         history = backups.history()
         self.assertEqual(history[0][0], name)
         self.assertEqual(history[0][1]["components"], ["clients", "geo"])
+
+    def test_endpoint_backup_contains_certbot_configuration(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        directory = self.state / "acme" / "config" / "renewal"
+        directory.mkdir(parents=True)
+        (directory / "vpn.example.conf").write_text("renewal configuration", encoding="utf-8")
+        name = backups.create(["endpoint"], "0.1.0")
+        backups.verify(name)
+        with ZipFile(backups.archive_path(name)) as archive:
+            manifest = json.loads(archive.read(backups.MANIFEST))
+            self.assertTrue(manifest["certbot_manual_restore"])
+            with tarfile.open(fileobj=BytesIO(archive.read("state/certbot-config.tar.gz")), mode="r:gz") as config:
+                self.assertEqual(config.extractfile("config/renewal/vpn.example.conf").read(), b"renewal configuration")
+        with backups.archive_path(name).open("rb") as source:
+            imported = backups.import_archive(source)
+        backups.verify(imported)
+        self.assertTrue(dict(backups.history())[imported]["certbot_manual_restore"])
+
+    def test_panel_only_backup_does_not_include_certbot_secrets(self):
+        (self.state / "panel.json").write_text("{}", encoding="utf-8")
+        directory = self.state / "acme" / "config"
+        directory.mkdir(parents=True)
+        (directory / "secret").write_text("private", encoding="utf-8")
+        name = backups.create(["panel"], "0.1.0")
+        with ZipFile(backups.archive_path(name)) as archive:
+            self.assertNotIn("state/certbot-config.tar.gz", archive.namelist())
+            self.assertNotIn("certbot_manual_restore", json.loads(archive.read(backups.MANIFEST)))
+
+    def test_certbot_files_are_not_reported_as_missing_external_files(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        directory = self.state / "acme" / "config" / "archive" / "vpn.example"
+        directory.mkdir(parents=True)
+        cert, key = directory / "cert.pem", directory / "key.pem"
+        cert.write_text("certificate", encoding="utf-8")
+        key.write_text("key", encoding="utf-8")
+        external = self.state.parent / "other.pem"
+        external.write_text("external", encoding="utf-8")
+        b.HOSTS.write_text(tomlkit.dumps({"main_hosts": [{"hostname": "vpn.example",
+                           "cert_chain_path": str(cert), "private_key_path": str(key)}],
+                           "ping_hosts": [{"hostname": "ping.example", "cert_chain_path": str(external)}]}),
+                           encoding="utf-8")
+        name = backups.create(["endpoint"], "0.1.0")
+        with ZipFile(backups.archive_path(name)) as archive:
+            manifest = json.loads(archive.read(backups.MANIFEST))
+        self.assertTrue(manifest["certbot_manual_restore"])
+        self.assertEqual(manifest["external_tls_files"], [str(external.resolve())])
+
+    def test_failed_certbot_snapshot_keeps_previous_backup(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        previous = backups.create(["endpoint"], "0.1.0")
+        directory = self.state / "acme" / "config"
+        directory.mkdir(parents=True)
+        (directory / "large-file").write_bytes(b"x" * 2048)
+        with patch.object(backups, "MAX_BYTES", 1024):
+            with self.assertRaisesRegex(ValueError, "Certbot configuration exceeds"):
+                backups.create(["endpoint"], "0.1.0")
+        self.assertEqual([path.name for path in backups.location().iterdir()], [previous])
+        backups.verify(previous)
+
+    def test_certbot_walk_failure_does_not_publish_backup(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        (self.state / "acme" / "config").mkdir(parents=True)
+
+        def fail_walk(path, *, followlinks, onerror):
+            onerror(PermissionError("unreadable directory"))
+            return iter(())
+
+        with patch.object(backups.os, "walk", side_effect=fail_walk):
+            with self.assertRaisesRegex(PermissionError, "unreadable directory"):
+                backups.create(["endpoint"], "0.1.0")
+        self.assertEqual(list(backups.location().iterdir()), [])
+
+    def test_certbot_configuration_must_be_directory(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        (self.state / "acme").mkdir()
+        (self.state / "acme" / "config").write_text("invalid", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "local directory"):
+            backups.create(["endpoint"], "0.1.0")
+        self.assertEqual(list(backups.location().iterdir()), [])
+
+    def test_import_rejects_modified_certbot_payload(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        directory = self.state / "acme" / "config"
+        directory.mkdir(parents=True)
+        (directory / "renewal.conf").write_text("original", encoding="utf-8")
+        original = backups.archive_path(backups.create(["endpoint"], "0.1.0"))
+        modified = BytesIO()
+        with ZipFile(original) as source, ZipFile(modified, "w") as target:
+            for name in source.namelist():
+                payload = source.read(name)
+                if name == "state/certbot-config.tar.gz":
+                    payload += b"tampered"
+                target.writestr(name, payload)
+        modified.seek(0)
+        with self.assertRaisesRegex(ValueError, "checksums"):
+            backups.import_archive(modified)
+
+    def test_certbot_archive_rejects_escaping_link(self):
+        path = self.state / "malicious.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            entry = tarfile.TarInfo("config/live/cert.pem")
+            entry.type = tarfile.SYMTYPE
+            entry.linkname = "../../../outside"
+            archive.addfile(entry)
+        with self.assertRaisesRegex(ValueError, "symbolic link"):
+            backups.validate_certbot_archive(path)
+
+    def test_import_rejects_certbot_link_even_with_matching_checksum(self):
+        nested = BytesIO()
+        with tarfile.open(fileobj=nested, mode="w:gz") as archive:
+            entry = tarfile.TarInfo("config/live/cert.pem")
+            entry.type = tarfile.SYMTYPE
+            entry.linkname = "../../../outside"
+            archive.addfile(entry)
+        payload = nested.getvalue()
+        member = "state/certbot-config.tar.gz"
+        manifest = {"format": 1, "version": "0.1.0", "created": "", "components": ["endpoint"],
+                    "files": {member: {"size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}},
+                    "certbot_manual_restore": True}
+        source = BytesIO()
+        with ZipFile(source, "w") as archive:
+            archive.writestr(backups.MANIFEST, json.dumps(manifest))
+            archive.writestr(member, payload)
+        source.seek(0)
+        with self.assertRaisesRegex(ValueError, "symbolic link"):
+            backups.import_archive(source)
+        self.assertEqual(list(backups.location().iterdir()), [])
+
+    def test_certbot_archive_accepts_relative_certificate_link(self):
+        path = self.state / "certbot.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            root = tarfile.TarInfo("config")
+            root.type = tarfile.DIRTYPE
+            archive.addfile(root)
+            entry = tarfile.TarInfo("config/live/vpn.example/cert.pem")
+            entry.type = tarfile.SYMTYPE
+            entry.linkname = "../../archive/vpn.example/cert1.pem"
+            archive.addfile(entry)
+        backups.validate_certbot_archive(path)
+
+    def test_certbot_archive_rejects_duplicate_entries(self):
+        path = self.state / "duplicate.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            for _ in range(2):
+                archive.addfile(tarfile.TarInfo("config/renewal/example.conf"))
+        with self.assertRaisesRegex(ValueError, "Invalid Certbot archive entry"):
+            backups.validate_certbot_archive(path)
+
+    def test_certbot_archive_requires_directory_root(self):
+        path = self.state / "root-file.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            archive.addfile(tarfile.TarInfo("config"))
+        with self.assertRaisesRegex(ValueError, "Invalid Certbot archive entry"):
+            backups.validate_certbot_archive(path)
+
+    def test_certbot_archive_rejects_files_beneath_links(self):
+        path = self.state / "nested.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            child = tarfile.TarInfo("config/live/link/file")
+            archive.addfile(child)
+            link = tarfile.TarInfo("config/live/link")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "../archive"
+            archive.addfile(link)
+        with self.assertRaisesRegex(ValueError, "nested under symbolic links"):
+            backups.validate_certbot_archive(path)
+
+    def test_certbot_archive_rejects_truncated_data(self):
+        path = self.state / "truncated.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            archive.addfile(tarfile.TarInfo("config/renewal/example.conf"))
+        data = path.read_bytes()
+        path.write_bytes(data[:len(data) // 2])
+        with self.assertRaisesRegex(ValueError, "damaged"):
+            backups.validate_certbot_archive(path)
+
+    def test_certbot_archive_rejects_expanded_data_over_limit(self):
+        path = self.state / "oversized.tar.gz"
+        with tarfile.open(path, "w:gz") as archive:
+            root = tarfile.TarInfo("config")
+            root.type = tarfile.DIRTYPE
+            archive.addfile(root)
+            entry = tarfile.TarInfo("config/large")
+            entry.size = 1025
+            archive.addfile(entry, BytesIO(b"x" * 1025))
+        with patch.object(backups, "MAX_BYTES", 1024):
+            with self.assertRaisesRegex(ValueError, "exceeds the supported size"):
+                backups.validate_certbot_archive(path)
+
+    @unittest.skipUnless(os.name == "posix", "Symbolic links require POSIX")
+    def test_certbot_snapshot_preserves_internal_links_and_rejects_external_links(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        root = self.state / "acme" / "config"
+        archive = root / "archive" / "vpn.example"
+        live = root / "live" / "vpn.example"
+        archive.mkdir(parents=True)
+        live.mkdir(parents=True)
+        (archive / "cert1.pem").write_text("certificate", encoding="utf-8")
+        (live / "cert.pem").symlink_to("../../archive/vpn.example/cert1.pem")
+        name = backups.create(["endpoint"], "0.1.0")
+        with ZipFile(backups.archive_path(name)) as snapshot:
+            with tarfile.open(fileobj=BytesIO(snapshot.read("state/certbot-config.tar.gz")), mode="r:gz") as config:
+                link = config.getmember("config/live/vpn.example/cert.pem")
+                self.assertTrue(link.issym())
+                self.assertEqual(link.linkname, "../../archive/vpn.example/cert1.pem")
+        (live / "outside").symlink_to("../../../../../outside")
+        with self.assertRaisesRegex(ValueError, "outside its directory"):
+            backups.create(["endpoint"], "0.1.0")
 
     def test_endpoint_snapshot_includes_only_managed_tls_files(self):
         cert, external = self.config / "tls-chain.pem", self.state.parent / "outside.pem"
@@ -146,6 +356,18 @@ class BackupsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "TLS metadata"):
             backups.import_archive(source)
         self.assertEqual(list(backups.location().iterdir()), [])
+
+    def test_rejects_certbot_archive_without_endpoint_metadata(self):
+        source = BytesIO()
+        member = "state/certbot-config.tar.gz"
+        manifest = {"format": 1, "version": "0.1.0", "created": "", "components": ["panel"],
+                    "files": {member: {}}, "certbot_manual_restore": True}
+        with ZipFile(source, "w") as archive:
+            archive.writestr(backups.MANIFEST, json.dumps(manifest))
+            archive.writestr(member, b"invalid")
+        source.seek(0)
+        with self.assertRaisesRegex(ValueError, "Certbot metadata"):
+            backups.import_archive(source)
 
     def test_failed_xray_validation_preserves_old_geodata_without_restarting(self):
         b.VPN.write_text(tomlkit.dumps({"listen_address": "127.0.0.1:443", "forward_protocol": b.ROUTER_FORWARD}),
