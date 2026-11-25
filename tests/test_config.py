@@ -13,10 +13,23 @@ import backend as b
 import certificates as tls
 import endpoint_settings
 from client_manager import ClientManager
-from routing import DEFAULT_ROUTING, ROUTER_ADDRESS
+from routing import DEFAULT_ROUTING, FIRST_CASCADE_PORT, ROUTER_ADDRESS, compile_routing
 
 
 class ConfigTest(unittest.TestCase):
+    def test_structured_cascade_compiles_to_native_client_and_socks_outbound(self):
+        remote = {"hostname": "vpn.example.com", "addresses": ["vpn.example.com:443"],
+                  "username": "client", "password": "secret", "upstream_protocol": "http3"}
+        spec = {**DEFAULT_ROUTING, "outbounds": [{"tag": "vpn", "protocol": "trusttunnel", "endpoint": remote}]}
+        xray, cascades = compile_routing(spec)
+        client = tomlkit.parse(cascades[FIRST_CASCADE_PORT])
+        self.assertEqual(client["endpoint"], {**remote, "tls_profile": "chrome"})
+        self.assertEqual(client["listener"]["socks"]["address"], f"127.0.0.1:{FIRST_CASCADE_PORT}")
+        self.assertEqual(xray["outbounds"][-1]["settings"]["servers"][0]["port"], FIRST_CASCADE_PORT)
+        remote["addresses"] = "not-an-array"
+        with self.assertRaisesRegex(ValueError, "provide hostname"):
+            compile_routing(spec)
+
     def test_acme_challenges_are_available_without_panel_login(self):
         directory = acme.webroot() / ".well-known" / "acme-challenge"
         directory.mkdir(parents=True)

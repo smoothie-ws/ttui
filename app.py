@@ -27,6 +27,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
 import acme
+from routing import compile_routing
 import certificates as tls
 import endpoint_settings as endpoint_form
 from client_manager import ClientManager
@@ -520,8 +521,14 @@ def update_tls_host():
 
 
 def render_routing(source, version, error=None):
+    geofiles = []
+    for path in sorted(b.GEO.glob("*.dat")):
+        if path.is_file() and not path.is_symlink():
+            info = path.stat()
+            geofiles.append({"name": path.name, "size": info.st_size,
+                            "updated": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(timespec="minutes")})
     return render_template("routing.html", source=source, revision=version, save_error=error,
-                           geofiles=sorted(path.name for path in b.GEO.glob("*.dat")),
+                           geofiles=geofiles,
                            router=b.service_state(b.ROUTER_UNIT))
 
 
@@ -540,7 +547,12 @@ def save_routing():
     check_revision(b.load_routing())
     source = request.form.get("spec", "")
     try:
-        b.apply_routing(json.loads(source))
+        spec = json.loads(source)
+        if request.form.get("operation") == "validate":
+            b.validate_xray(compile_routing(spec)[0])
+            flash("Xray accepted the proposed configuration.")
+            return render_routing(source, request.form["revision"])
+        b.apply_routing(spec)
     except OPERATION_ERRORS as error:
         return render_routing(source, request.form["revision"], str(error)), 400
     return saved("routing", "Routing settings saved.")
@@ -555,6 +567,16 @@ def upload_geo():
     if not upload.stream.read(1):
         raise ValueError("The file is empty.")
     upload.stream.seek(0)
+    expected = request.form.get("sha256", "").strip().lower()
+    if expected:
+        if not re.fullmatch(r"[a-f0-9]{64}", expected):
+            raise ValueError("Enter a 64-character SHA-256 checksum.")
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: upload.stream.read(128 * 1024), b""):
+            digest.update(chunk)
+        if digest.hexdigest() != expected:
+            raise ValueError("The geodata file does not match its SHA-256 checksum.")
+        upload.stream.seek(0)
     b.replace_geofile(upload.filename, upload.stream)
     return saved("routing", "Geodata file saved.")
 

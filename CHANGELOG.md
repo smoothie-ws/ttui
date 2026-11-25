@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Configure VLESS, VMess, Trojan, Shadowsocks, and TrustTunnel cascades in the visual routing editor. Validate drafts in Xray and verify geodata uploads by SHA-256.
 - Issue and renew VPN certificates with Let's Encrypt on managed Caddy installations.
 - Manage VPN TLS hosts and PEM uploads, with certificate validation, expiry warnings, and change history.
 - Manage client profiles, search and filter clients, enable or disable accounts, and perform bulk actions. Export connection QR codes locally.

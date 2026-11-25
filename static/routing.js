@@ -6,10 +6,12 @@ const editor = find("routing-editor");
 const error = find("routing-error");
 const customProtocols = {
   socks: "SOCKS5", http: "HTTP", trusttunnel: "TrustTunnel", freedom: "Freedom",
-  blackhole: "Blackhole", xray: "Other Xray protocol"
+  blackhole: "Blackhole", vless: "VLESS", vmess: "VMess", trojan: "Trojan",
+  shadowsocks: "Shadowsocks", xray: "Other Xray protocol"
 };
 let spec;
 let fieldReaders = [];
+let draggedRule = null;
 
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -69,6 +71,12 @@ function targets() {
     .filter(Boolean).map((tag) => [tag, tag]));
 }
 
+function showRoutingOrder() {
+  const entries = spec.rules.map((rule, index) =>
+    node("li", `Rule ${index + 1} → ${rule.outboundTag || "Choose an outbound"}`));
+  find("routing-order").replaceChildren(...entries, node("li", `Default → ${spec.default}`));
+}
+
 function collect() {
   try {
     for (const read of fieldReaders) read();
@@ -76,6 +84,7 @@ function collect() {
     spec.default = find("routing-default").value;
     spec.domainStrategy = find("routing-strategy").value;
     source.value = JSON.stringify(spec, null, 2);
+    showRoutingOrder();
     error.hidden = true;
     return true;
   } catch (problem) {
@@ -101,6 +110,8 @@ function redraw() {
     const protocol = field(top, "Type", options(node("select"), customProtocols, kind));
     top.append(button("Delete", () => spec.outbounds.splice(index, 1)));
     let address, port, user, password, advanced;
+    const typed = typedForm(box, outbound);
+    const cascade = kind === "trusttunnel" ? cascadeForm(box, outbound) : null;
     const server = outbound.settings?.servers?.[0];
     const proxy = ["socks", "http"].includes(kind);
     const {tag: _tag, protocol: _protocol, ...extra} = outbound;
@@ -120,9 +131,7 @@ function redraw() {
       user = input(grid, "Username", server?.users?.[0]?.user);
       password = input(grid, "Password", server?.users?.[0]?.pass);
       password.type = "password";
-    } else if (kind === "trusttunnel") {
-      advanced = input(box, "Remote endpoint TOML", outbound.config, "Paste the TrustTunnel TOML export", true);
-    } else if (kind === "xray" || proxy || Object.keys(outbound).length > 2) {
+    } else if (!typed && !cascade && (kind === "xray" || proxy || Object.keys(outbound).length > 2)) {
       advanced = input(box, "Xray outbound options (JSON)", JSON.stringify({protocol: _protocol, ...extra}, null, 2), "", true);
     }
     tag.addEventListener("change", () => {
@@ -146,13 +155,15 @@ function redraw() {
         }
       }
       if (protocol.value !== kind) {
-        spec.outbounds[index] = {tag: nextTag, protocol: protocol.value === "xray" ? "vless" : protocol.value};
+        spec.outbounds[index] = {tag: nextTag, protocol: protocol.value === "xray" ? "wireguard" : protocol.value};
+      } else if (typed) {
+        spec.outbounds[index] = {...typed(), tag: nextTag};
       } else if (address) {
         const target = {address: address.value.trim(), port: Number(port.value)};
         if (user.value || password.value) target.users = [{user: user.value, pass: password.value}];
         spec.outbounds[index] = {tag: nextTag, protocol: kind, settings: {servers: [target]}};
-      } else if (kind === "trusttunnel") {
-        spec.outbounds[index] = {tag: nextTag, protocol: kind, config: advanced.value};
+      } else if (cascade) {
+        spec.outbounds[index] = {tag: nextTag, protocol: kind, ...cascade()};
       } else if (advanced) {
         const config = JSON.parse(advanced.value);
         if (!config || typeof config !== "object" || Array.isArray(config)) {
@@ -177,6 +188,26 @@ function redraw() {
     const port = input(top, "Destination ports", rule.port, "80,443,1000-2000");
     const actions = node("div", "", "actions");
     top.append(actions);
+    const handle = node("span", "Drag to reorder", "drag-handle subtle");
+    handle.draggable = true;
+    handle.addEventListener("dragstart", (event) => {
+      if (!collect()) return event.preventDefault();
+      draggedRule = index;
+      event.dataTransfer.setData("text/plain", "ttui-rule");
+    });
+    handle.addEventListener("dragend", () => { draggedRule = null; });
+    box.addEventListener("dragover", (event) => {
+      if (draggedRule !== null) event.preventDefault();
+    });
+    box.addEventListener("drop", (event) => {
+      if (draggedRule === null) return;
+      event.preventDefault();
+      const [moved] = spec.rules.splice(draggedRule, 1);
+      spec.rules.splice(index, 0, moved);
+      draggedRule = null;
+      redraw();
+    });
+    actions.append(handle);
     for (const [delta, label] of [[-1, "Move up"], [1, "Move down"]]) {
       const move = button(label, () => {
         [spec.rules[index], spec.rules[index + delta]] = [spec.rules[index + delta], spec.rules[index]];
@@ -187,6 +218,7 @@ function redraw() {
     actions.append(button("Delete", () => spec.rules.splice(index, 1)));
     const domains = input(box, "Domains, one per line", rule.domain?.join("\n"), "regexp:^.*\\.example\\.org$", true);
     const ips = input(box, "IP addresses and CIDR ranges, one per line", rule.ip?.join("\n"), "geoip:private", true);
+    const network = field(box, "Network", options(node("select"), {"": "Any", tcp: "TCP", udp: "UDP"}, rule.network ?? ""));
     domains.rows = ips.rows = 2;
     fieldReaders.push(() => {
       const updated = {...rule, outboundTag: target.value};
@@ -197,11 +229,14 @@ function redraw() {
       }
       if (port.value.trim()) updated.port = port.value.trim();
       else delete updated.port;
+      if (network.value) updated.network = network.value;
+      else delete updated.network;
       spec.rules[index] = updated;
     });
     rules.append(box);
   });
   source.value = JSON.stringify(spec, null, 2);
+  showRoutingOrder();
 }
 
 function load() {

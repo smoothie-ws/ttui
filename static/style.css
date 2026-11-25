@@ -85,6 +85,7 @@ summary span.subtle { margin-left: .35rem; font-weight: 400; }
 .host-list > div { display: flex; flex-wrap: wrap; justify-content: space-between; border-bottom: 1px solid var(--line); gap: 8px; padding: 0 0 6px; overflow-wrap: anywhere; }
 .host-list span { color: var(--muted); }
 .editor-item { border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+.drag-handle { cursor: grab; }
 #routing-editor[inert] { opacity: .5; }
 .login-wrap { min-height: calc(100dvh - 108px); align-content: center; justify-items: center; }
 .login-card { width: min(100%, 360px); display: grid; gap: 18px; }

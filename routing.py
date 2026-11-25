@@ -39,18 +39,25 @@ def compile_routing(spec):
         if protocol == "trusttunnel":
             if len(cascades) >= 32:
                 raise ValueError("Up to 32 cascades are supported.")
-            raw = outbound.get("config")
-            if not isinstance(raw, str):
-                raise ValueError(f"{tag}: a TrustTunnel TOML configuration is required.")
-            client = tomlkit.parse(raw)
-            # An endpoint export and a full CLI configuration use different shapes.
-            if "endpoint" not in client:
-                client = tomlkit.document().append("endpoint", client)
+            if "endpoint" in outbound:
+                if not isinstance(outbound["endpoint"], dict):
+                    raise ValueError(f"{tag}: provide a TrustTunnel endpoint object.")
+                client = tomlkit.document().append("endpoint", outbound["endpoint"])
+            else:
+                raw = outbound.get("config")
+                if not isinstance(raw, str):
+                    raise ValueError(f"{tag}: provide TrustTunnel connection settings.")
+                client = tomlkit.parse(raw)
+                # An endpoint export and a full CLI configuration use different shapes.
+                if "endpoint" not in client:
+                    client = tomlkit.document().append("endpoint", client)
             endpoint = client["endpoint"]
             if not isinstance(endpoint, dict):
                 raise ValueError(f"{tag}: an endpoint table is required.")
             if not all(
-                endpoint.get(key) for key in ("hostname", "addresses", "username", "password")
+                isinstance(endpoint.get(key), str) and endpoint[key] for key in ("hostname", "username", "password")
+            ) or not isinstance(endpoint.get("addresses"), list) or not endpoint["addresses"] or not all(
+                isinstance(address, str) and address for address in endpoint["addresses"]
             ):
                 raise ValueError(f"{tag}: provide hostname, addresses, username, and password.")
             if endpoint.get("client_random_prefix") and not endpoint.get("client_random"):

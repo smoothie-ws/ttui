@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Routing{% endblock %}
-{% block scripts %}<script defer src="{{ url_for('static', filename='routing.js') }}"></script>{% endblock %}
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='xray-outbound.js') }}"></script>
+<script defer src="{{ url_for('static', filename='routing.js') }}"></script>
+{% endblock %}
 {% block content %}
 {{ heading('Routing', 'The first matching rule selects the outbound.', 'Xray', router) }}
 {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
@@ -25,6 +28,7 @@
       <div class="section-title"><h2>Rules</h2><button type="button" id="add-rule">Add rule</button></div>
       <div id="rules" class="stack"></div>
       <p class="subtle">Domains: domain:example.org, regexp:, geosite:, ext:file.dat:group. IP: CIDR, geoip:, ext:file.dat:group.</p>
+      <details><summary>Routing order</summary><ol id="routing-order"></ol></details>
     </section>
   </div>
   <details class="card" id="routing-raw" open>
@@ -35,14 +39,24 @@
     </div>
   </details>
   <p id="routing-error" class="notice error" role="alert" hidden></p>
-  <div><button class="primary">Apply routing</button></div>
+  <div class="actions">
+    <button class="primary" name="operation" value="apply">Apply routing</button>
+    <button name="operation" value="validate">Validate in Xray</button>
+  </div>
 </form>
 <section class="card stack">
   <h2>Geodata files</h2>
-  {% if geofiles %}<div class="files">{% for file in geofiles %}<code>{{ file }}</code>{% endfor %}</div>{% endif %}
+  {% if geofiles %}
+  <div class="host-list">
+    {% for file in geofiles %}
+    <div><strong>{{ file.name }}</strong> <span class="subtle">{{ '%.1f MiB'|format(file.size / 1048576) }} · <time datetime="{{ file.updated }}">{{ file.updated }}</time></span></div>
+    {% endfor %}
+  </div>
+  {% endif %}
   <form class="row" method="post" action="{{ url_for('upload_geo') }}" enctype="multipart/form-data">
     {{ token() }}
     <label>Xray .dat file <input name="data" type="file" accept=".dat" required></label>
+    <label>SHA-256 <input name="sha256" maxlength="64" spellcheck="false" placeholder="Optional checksum"></label>
     <button>Upload or replace</button>
   </form>
 </section>

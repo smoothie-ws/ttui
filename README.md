@@ -71,8 +71,8 @@ The installer stops if it finds an unmanaged `trusttunnel.service`. To migrate a
 
 ## Routing and cascades
 
-1. Add an outbound. The built-in `direct` (Freedom) and `block` (Blackhole) outbounds are available immediately. Use the form to add an HTTP or SOCKS5 proxy or a TrustTunnel outbound. Use JSON for other Xray outbound types.
-2. For a cascade, paste TOML exported by the remote TrustTunnel Endpoint or a full CLI configuration with an `[endpoint]` table. The cascade requires an address and static credentials for the remote endpoint. ttui starts a separate local SOCKS5 listener for each cascade.
+1. Add an outbound. The built-in `direct` (Freedom) and `block` (Blackhole) outbounds are available immediately. The editor supports HTTP, SOCKS5, VLESS, VMess, Trojan, Shadowsocks, and TrustTunnel. For VLESS, VMess, Trojan, and Shadowsocks, it also exposes TCP, WebSocket, gRPC, and XHTTP transport options and TLS or REALITY fields. Choose a combination supported by the remote server and validate it with Xray. Use JSON for configurations outside the form.
+2. For a TrustTunnel cascade, enter the remote addresses, TLS hostname, and client credentials. You can also paste an endpoint export or a full TrustTunnel Client TOML configuration. ttui starts a separate local SOCKS5 listener for each cascade.
 3. Add rules in evaluation order. The first match selects the outbound. Set a default outbound for the remaining traffic. All specified fields in a rule must match.
 4. Enable routing. TrustTunnel sends traffic to Xray through a local SOCKS5 listener. Disabling routing restores the previous `forward_protocol`.
 
@@ -82,7 +82,7 @@ The installer stops if it finds an unmanaged `trusttunnel.service`. To migrate a
 | IP | `203.0.113.0/24`, `geoip:private`, `ext:custom-ip.dat:group` |
 | Ports | `80,443,1000-2000` |
 
-Upload additional Xray `.dat` databases under **Geodata files**. Xray provides the default `geosite.dat` and `geoip.dat` files. The JSON editor supports advanced rule fields such as `network` and nested outbound settings such as `streamSettings`.
+Upload additional Xray `.dat` databases under **Geodata files**. An optional SHA-256 value verifies uploads before replacement. Xray provides the default `geosite.dat` and `geoip.dat` files. Use **Validate in Xray** to inspect a draft without applying it. The JSON editor supports advanced rule fields and nested outbound settings.
 
 Xray receives the destination address, port, and hostname when available. Rules apply to all clients through the shared SOCKS5 inbound. Use IP rules for connections without an available hostname. UDP support depends on the outbound. HTTP proxies handle TCP.
 

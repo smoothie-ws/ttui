@@ -30,6 +30,7 @@ jobs:
           bash -n scripts/smoke-install.sh
           node --check static/panel.js
           node --check static/routing.js
+          node --check static/xray-outbound.js
           git show --format= --check HEAD
   install:
     runs-on: ubuntu-24.04
