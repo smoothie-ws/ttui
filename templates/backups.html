@@ -67,7 +67,7 @@
         <input type="hidden" name="name" value="{{ name }}">
         <p>Matching files will be replaced. VPN connections may be interrupted.</p>
         {% if 'panel' in archive['components'] %}
-        <p>Make sure you know the administrator credentials and panel path saved in this backup. Restoring them signs out all sessions.</p>
+        <p>Make sure you can sign in with the archived administrator credentials, authenticator, and panel path. Restoring them signs out all sessions.</p>
         {% endif %}
         <label>Current administrator password <input type="password" name="current_password" autocomplete="current-password" required></label>
         <div><button name="operation" value="restore">Restore backup</button></div>

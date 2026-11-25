@@ -35,6 +35,10 @@ sudo -u ttui env TTUI_STATE=/var/lib/ttui \
   /opt/ttui/venv/bin/python /opt/ttui/app.py --reset-login
 ```
 
+In **Settings**, set up a TOTP authenticator, choose an optional IP allowlist, or open **Administrative activity** to review sign-ins and changes. Enable the authenticator by scanning the QR code and entering its six-digit code. Changing the authenticator signs out other sessions. A nonempty allowlist must include your current address. Use IP addresses or CIDR ranges and keep access to the server console if your address changes. With an external reverse proxy, configure it to supply the verified client IP as described above.
+
+If you lose the authenticator or the allowlist blocks your address, use the password reset command from the server console. Add `--clear-totp`, `--clear-allowlist`, or both to clear the affected settings. Backups containing panel settings also contain the authenticator secret.
+
 ### Published releases
 
 The stable installer verifies the release archive's SHA-256 checksum. To install `v0.1.0`, use `--panel-only` to skip the terminal wizard. That release uses SSH access and offers manual TOML configuration under **Server**. Browser-first setup requires a newer build.

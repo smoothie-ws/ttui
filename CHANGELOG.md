@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Protect administrator sign-in with an optional TOTP authenticator and IP allowlist. Review administrative actions from the settings page.
 - Check official releases and install compatible upgrades from the panel. Verify the sign-in page before accepting a restarted panel service.
 - Create, download, verify, import, and restore private configuration backups. Schedule automatic backups in the panel and save a configuration snapshot before an upgrade.
 - Review host resource history, inspect or download component journals, and run service diagnostics from the panel.

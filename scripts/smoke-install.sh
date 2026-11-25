@@ -47,10 +47,14 @@ systemctl is-active --quiet ttui-backups.timer
 sudo systemctl start ttui-metrics.service
 sudo -u ttui sudo -n /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui.service >/dev/null
 python3 - "$work/install.log" <<'PY'
+import base64
+import hmac
 import re
 import sys
+import time
 from http.cookiejar import CookieJar
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPCookieProcessor, build_opener
 
@@ -61,9 +65,9 @@ base = "http://127.0.0.1:8080/ttui"
 def get(path):
     return client.open(base + path, timeout=15).read().decode()
 
-def submit(path, page, **fields):
+def submit(route, page, **fields):
     fields["csrf"] = re.search(r'name="csrf" value="([^"]+)"', page)[1]
-    return client.open(base + path, urlencode(fields, doseq=True).encode(), timeout=45).read().decode()
+    return client.open(base + route, urlencode(fields, doseq=True).encode(), timeout=45).read().decode()
 
 submit("/login", get("/login"), username="admin", password=password)
 assert "Not configured" in get("/")
@@ -97,6 +101,33 @@ assert "Backup restored." in page
 assert new_password not in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="toml")
 assert "tt://?" in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="deeplink")
 assert "Backup schedule saved." in submit("/backups", page, operation="schedule", interval="daily", component="panel")
+settings = get("/settings")
+assert "Panel settings saved." in submit("/settings", settings, username="admin", path="/ttui",
+                                      current_password=password, ip_allowlist="127.0.0.1")
+setup = submit("/mfa", get("/settings"), operation="begin", current_password=password)
+key = base64.b32decode(re.search(r'<code>([A-Z2-7]{32})</code>', setup)[1])
+enrollment = re.search(r'name="enrollment" value="([^"]+)"', setup)[1]
+
+def otp(counter):
+    digest = hmac.digest(key, counter.to_bytes(8, "big"), "sha1")
+    offset = digest[-1] & 15
+    return f"{(int.from_bytes(digest[offset:offset + 4], 'big') & 0x7fffffff) % 1_000_000:06}"
+
+if time.time() % 30 > 24:
+    time.sleep(31 - time.time() % 30)
+step = int(time.time()) // 30
+enabled = submit("/mfa", setup, operation="enable", enrollment=enrollment, code=otp(step - 1))
+assert "Two-factor authentication is enabled." in enabled
+submit("/logout", enabled)
+try:
+    submit("/login", get("/login"), username="admin", password=password, code=otp(step - 1))
+    raise AssertionError("Authenticator accepted a reused code")
+except HTTPError as error:
+    assert error.code == 401
+submit("/login", get("/login"), username="admin", password=password, code=otp(step))
+disabled = submit("/mfa", get("/settings"), operation="disable", current_password=password, code=otp(step + 1))
+assert "Set up authenticator" in disabled
+assert "Audit: authenticator enabled" in get("/logs?source=panel&q=Audit%3A")
 PY
 sudo -u ttui sed -i -E 's/("next": )"[^"]+"/\1"2000-01-01T00:00:00+00:00"/' /var/lib/ttui/backup-schedule.json
 sudo systemctl start ttui-backups.service

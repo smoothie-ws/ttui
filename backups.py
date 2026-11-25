@@ -13,6 +13,7 @@ from zlib import error as CompressionError
 
 import tomlkit
 
+import auth
 import backend as b
 import certificates as tls
 from routing import DEFAULT_ROUTING, compile_routing
@@ -236,7 +237,7 @@ def destinations(staged):
     return changes
 
 
-def validate_restore(changes, components, current):
+def validate_restore(changes, components, current, client_address=None):
     def read(path, default=""):
         source = changes.get(path, path)
         if isinstance(source, str):
@@ -259,6 +260,13 @@ def validate_restore(changes, components, current):
                     or not re.fullmatch(r"(?:scrypt|pbkdf2):[^$]+\$[^$]+\$[0-9a-f]+", config["password_hash"])
                     or type(config.get("secure_cookie")) is not bool):
                 raise ValueError("The archive contains invalid panel settings.")
+            if "totp_secret" in config and not auth.valid_totp_secret(config["totp_secret"]):
+                raise ValueError("The archive contains an invalid authenticator secret.")
+            networks = auth.normalize_networks(config.get("ip_allowlist", []))
+            if client_address is not None and not auth.address_allowed(networks, client_address):
+                raise ValueError("The archived allowlist excludes your current IP address.")
+            if "ip_allowlist" in config:
+                config["ip_allowlist"] = networks
             new_path = config["path"]
             config.update(secret=current["secret"], session_epoch=secrets.token_hex(16))
             changes[panel] = json.dumps(config)
@@ -323,11 +331,11 @@ def validate_restore(changes, components, current):
     return new_path, endpoint_changed, routing_changed, config if spec["enabled"] else None
 
 
-def restore(name, current):
+def restore(name, current, client_address=None):
     with TemporaryDirectory(dir=location(), prefix=".restore-") as directory:
         manifest, staged = verify_file(archive_path(name), Path(directory))
         changes = destinations(staged)
-        result = validate_restore(changes, set(manifest["components"]), current)
+        result = validate_restore(changes, set(manifest["components"]), current, client_address)
         path, endpoint_changed, routing_changed, config = result
         runtime_changed = endpoint_changed or routing_changed
         endpoint_active = runtime_changed and b.service_state(b.ENDPOINT_UNIT) == "active"

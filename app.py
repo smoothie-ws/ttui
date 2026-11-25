@@ -23,12 +23,14 @@ from qrcode.exceptions import DataOverflowError
 from qrcode.image.svg import SvgPathFillImage
 from flask import Flask, Response, abort, flash, redirect, render_template, request, send_file, session, url_for
 from flask.sessions import SecureCookieSessionInterface
+from itsdangerous import BadData, URLSafeTimedSerializer
 from tomlkit.exceptions import ParseError
 from waitress import serve
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
 import acme
+import auth
 import backups as snapshots
 from routing import compile_routing
 import certificates as tls
@@ -37,7 +39,6 @@ import endpoint_settings as endpoint_form
 import service_logs
 import updates as updater
 from client_manager import ClientManager
-from auth import clear_attempts, reserve_attempt
 from monitoring import PERIODS, collect_sample, history, host_metrics
 
 SETTINGS = b.STATE / "panel.json"
@@ -98,13 +99,26 @@ def session_id(config):
                        + config.get("session_epoch", "").encode(), "sha256").hex()
 
 
+def health_token(config):
+    return hmac.digest(config["secret"].encode(), b"ttui sign-in health check", "sha256").hex()
+
+
 @app.before_request
 def guard():
-    if request.endpoint is None:
+    if request.endpoint in (None, "acme_challenge"):
         return
-    if request.endpoint not in ("login", "static", "acme_challenge") and not authenticated(request_settings()):
+    config = request_settings()
+    if not auth.address_allowed(config.get("ip_allowlist", []), request.remote_addr or ""):
+        is_probe = (request.endpoint == "login" and request.method == "GET"
+                    and hmac.compare_digest(request.headers.get("X-Ttui-Health", "").encode(), health_token(config).encode()))
+        if not is_probe:
+            abort(403)
+    protected = request.endpoint not in ("login", "static")
+    if protected and not authenticated(config):
         return redirect(url_for("login"))
     if request.method == "POST":
+        if protected:
+            request.environ["ttui.audit_action"] = request.endpoint
         token = session.get("csrf", "")
         if not token or not hmac.compare_digest(request.form.get("csrf", "").encode(), token.encode()):
             abort(403)
@@ -118,8 +132,10 @@ def headers(response):
         "Referrer-Policy": "no-referrer",
         "Content-Security-Policy": "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     })
-    if request.method == "POST" and request.endpoint not in (None, "login") and authenticated(request_settings()):
-        app.logger.info("Administrative request: %s, status=%s", request.endpoint, response.status_code)
+    event = request.environ.get("ttui.audit_action")
+    if event:
+        result = "rejected" if response.status_code >= 400 or request.environ.get("ttui.action_failed") else "completed"
+        app.logger.info("Audit: %s %s from %r", event, result, request.remote_addr)
     return response
 
 
@@ -148,10 +164,14 @@ def action(page):
                 with (b.configuration_change() if request.method == "POST" else b.LOCK):
                     if request.method == "POST" and "ttui.settings" in request.environ:
                         request.environ["ttui.settings"] = config = settings()
+                        if not auth.address_allowed(config.get("ip_allowlist", []), request.remote_addr or ""):
+                            abort(403)
                         if not authenticated(config):
+                            request.environ["ttui.action_failed"] = True
                             return redirect(config["path"] + "/login")
                     return function(*args, **kwargs)
             except OPERATION_ERRORS as error:
+                request.environ["ttui.action_failed"] = True
                 flash(str(error), "error")
                 return redirect(url_for(page))
         return wrapped
@@ -171,11 +191,13 @@ def panel_bind():
 def verify_panel_http():
     host, port = panel_bind()
     host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
-    path = settings()["path"] + "/login"
+    config = settings()
+    path = config["path"] + "/login"
+    headers = {"X-Ttui-Health": health_token(config)}
     for _ in range(12):
         connection = HTTPConnection(host, port, timeout=1)
         try:
-            connection.request("GET", path)
+            connection.request("GET", path, headers=headers)
             response = connection.getresponse()
             if response.status == 200 and b'name="csrf"' in response.read(65536):
                 return
@@ -192,18 +214,22 @@ def login():
     if request.method == "POST":
         address = request.remote_addr or "unknown"
         database = b.STATE / "sign-in.sqlite3"
-        if delay := reserve_attempt(database, address):
+        if delay := auth.reserve_attempt(database, address):
             return render_template("login.html", error="Too many attempts. Try again in a minute."), 429, {
                 "Retry-After": str(delay),
             }
         config = settings()
+        if not auth.address_allowed(config.get("ip_allowlist", []), address):
+            abort(403)
         password = request.form.get("password", "")
         password_ok = len(password) <= 256 and check_password_hash(config["password_hash"], password)
         username_ok = hmac.compare_digest(config["username"].encode(), request.form.get("username", "").encode())
-        if not password_ok or not username_ok:
-            return render_template("login.html", error="Incorrect username or password."), 401
-        clear_attempts(database, address)
-        app.logger.info("Administrator signed in from %s", address)
+        secret = config.get("totp_secret")
+        if not password_ok or not username_ok or (secret and not auth.use_totp(database, secret, request.form.get("code", ""))):
+            app.logger.info("Audit: sign-in rejected from %r", address)
+            return render_template("login.html", error="Incorrect credentials or authenticator code."), 401
+        auth.clear_attempts(database, address)
+        app.logger.info("Audit: sign-in completed from %r", address)
         session.clear()
         session["auth"] = session_id(config)
         session.permanent = True
@@ -226,8 +252,50 @@ def revoke_sessions():
     config["session_epoch"] = secrets.token_hex(16)
     b.write_json(SETTINGS, config)
     session.clear()
-    app.logger.info("Administrator revoked all sessions")
     return redirect(url_for("login"))
+
+
+@app.post("/mfa")
+@action("panel_settings")
+def mfa():
+    config = request_settings().copy()
+    operation = request.form.get("operation")
+    serializer = URLSafeTimedSerializer(config["secret"], salt="ttui-totp-enrollment")
+    database = b.STATE / "sign-in.sqlite3"
+    code = request.form.get("code", "")
+    if operation in ("begin", "disable") and not check_password_hash(
+        config["password_hash"], request.form.get("current_password", "")
+    ):
+        raise ValueError("Enter the current password.")
+    if operation == "begin" and not config.get("totp_secret"):
+        secret = auth.new_totp_secret()
+        enrollment = serializer.dumps({"secret": secret, "csrf": session["csrf"]})
+        account = f"{config['username']}@{request.host[:128]}"
+        svg = qrcode.make(auth.totp_uri(secret, account), image_factory=SvgPathFillImage)
+        return render_template("mfa.html", enrollment=enrollment, secret=secret, qr=svg.to_string(encoding="unicode"))
+    if operation == "enable" and not config.get("totp_secret"):
+        try:
+            pending = serializer.loads(request.form.get("enrollment", ""), max_age=600)
+        except BadData as error:
+            raise ValueError("Set up the authenticator again. The setup link has expired or is invalid.") from error
+        if not isinstance(pending, dict) or pending.get("csrf") != session.get("csrf"):
+            raise ValueError("Start authenticator setup in this session.")
+        secret = pending.get("secret")
+        if not auth.use_totp(database, secret, code):
+            raise ValueError("The authenticator code was invalid or already used. Start setup again.")
+        config["totp_secret"] = secret
+    elif operation == "disable" and config.get("totp_secret"):
+        if not auth.use_totp(database, config["totp_secret"], code):
+            raise ValueError("Enter a fresh authenticator code.")
+        config.pop("totp_secret")
+    else:
+        raise ValueError("The requested authenticator change is unavailable.")
+    config["session_epoch"] = secrets.token_hex(16)
+    b.write_json(SETTINGS, config)
+    session["auth"] = session_id(config)
+    session.pop("csrf", None)
+    app.logger.info("Audit: authenticator %s from %r", "enabled" if operation == "enable" else "disabled", request.remote_addr)
+    return saved("panel_settings", "Authenticator settings saved. Other sessions were signed out.")
 
 
 def read_vpn():
@@ -367,7 +435,7 @@ def backups():
             config = request_settings()
             if not check_password_hash(config["password_hash"], request.form.get("current_password", "")):
                 raise ValueError("Enter your current administrator password.")
-            path = snapshots.restore(request.form.get("name", ""), config)
+            path = snapshots.restore(request.form.get("name", ""), config, request.remote_addr or "")
             if path is not None:
                 session.clear()
                 if path == config["path"]:
@@ -755,6 +823,14 @@ def save_settings():
         raise ValueError("Enter the current password.")
     old_path = config["path"]
     secure = PUBLIC_HTTPS or form.get("secure_cookie") == "on"
+    if "ip_allowlist" in form:
+        value = form["ip_allowlist"]
+        if len(value) > 4096:
+            raise ValueError("The IP allowlist is too long.")
+        networks = auth.normalize_networks(re.split(r"[\s,]+", value.strip()) if value.strip() else [])
+        if not auth.address_allowed(networks, request.remote_addr or ""):
+            raise ValueError("Include your current IP address in the allowlist or leave the allowlist empty.")
+        config["ip_allowlist"] = networks
     changed_login = username != config["username"] or bool(password)
     config.update(path=path, address=form.get("address", "").strip(),
                   username=username, secure_cookie=secure)
@@ -784,7 +860,11 @@ def main():
     mode.add_argument("--scheduled-backup", action="store_true")
     parser.add_argument("--path")
     parser.add_argument("--username")
+    parser.add_argument("--clear-totp", action="store_true")
+    parser.add_argument("--clear-allowlist", action="store_true")
     args = parser.parse_args()
+    if (args.clear_totp or args.clear_allowlist) and not args.reset_login:
+        parser.error("--clear-totp and --clear-allowlist require --reset-login")
     os.umask(0o077)
     if args.sample_metrics:
         collect_sample(b.STATE)
@@ -820,14 +900,20 @@ def main():
             password = secrets.token_urlsafe(24)
             path = clean_path(args.path) if args.path is not None else config.get("path", "/ttui")
             config.update(path=path, username=args.username or config.get("username", "admin"),
-                          password_hash=generate_password_hash(password), secure_cookie=False)
+                          password_hash=generate_password_hash(password), secure_cookie=config.get("secure_cookie", False))
+            if args.clear_totp:
+                config.pop("totp_secret", None)
+            if args.clear_allowlist:
+                config.pop("ip_allowlist", None)
             b.write_json(SETTINGS, config)
             print(f"ttui {path or '/'} | {config['username']} | {password}")
         return
     app.secret_key = settings()["secret"]
     app.logger.setLevel(logging.INFO)
+    app.logger.propagate = False
     host, port = panel_bind()
     proxy = {"trusted_proxy": "127.0.0.1",
+             "trusted_proxy_count": 1, "clear_untrusted_proxy_headers": True,
              "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto"}} if PUBLIC_HTTPS else {}
     serve(app, host=host, port=port,
           threads=4, max_request_body_size=app.config["MAX_CONTENT_LENGTH"], **proxy)

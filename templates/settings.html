@@ -11,11 +11,31 @@
       <label>Username <input name="username" value="{{ config.username }}" autocomplete="username" maxlength="64" required></label>
       <label>New password <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Leave blank to keep the current password"></label>
     </div>
+    <label>IP allowlist
+      <textarea name="ip_allowlist" rows="3" maxlength="4096" spellcheck="false" placeholder="192.0.2.10 or 2001:db8::/48">{{ (config.ip_allowlist or []) | join('\n') }}</textarea>
+      <small class="subtle">Enter addresses or CIDR ranges. Leave blank to allow every address. Your current address is {{ request.remote_addr }}.</small>
+    </label>
     <label class="check"><input name="secure_cookie" type="checkbox" {% if config.secure_cookie or https_required %}checked{% endif %} {% if https_required %}disabled{% endif %}> Send cookies over HTTPS only</label>
     <div class="row separate">
       <label>Current password <input type="password" name="current_password" autocomplete="current-password" maxlength="256" required></label>
       <button class="primary">Save settings</button>
     </div>
+  </form>
+</section>
+<section class="card stack">
+  <h2>Authenticator</h2>
+  {% if config.totp_secret %}
+  <p>Two-factor authentication is enabled.</p>
+  {% endif %}
+  <form class="row" method="post" action="{{ url_for('mfa') }}">
+    {{ token() }}
+    <label>Current password <input type="password" name="current_password" required maxlength="256" autocomplete="current-password"></label>
+    {% if config.totp_secret %}
+    <label>Authenticator code <input name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label>
+    <button name="operation" value="disable">Disable authenticator</button>
+    {% else %}
+    <button name="operation" value="begin">Set up authenticator</button>
+    {% endif %}
   </form>
 </section>
 <section class="card stack">
@@ -25,5 +45,6 @@
     <label>Current password <input type="password" name="current_password" required maxlength="256" autocomplete="current-password"></label>
     <button class="danger">Sign out all sessions</button>
   </form>
+  <div><a href="{{ url_for('logs', source='panel', q='Audit:') }}">Administrative activity</a></div>
 </section>
 {% endblock %}

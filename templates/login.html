@@ -9,6 +9,7 @@
     {{ token() }}
     <label>Username <input name="username" autocomplete="username" required maxlength="64" autofocus></label>
     <label>Password <input type="password" name="password" autocomplete="current-password" required maxlength="256"></label>
+    <label>Authenticator code (if enabled) <input name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"></label>
     <button class="primary">Sign in</button>
   </form>
 </section>

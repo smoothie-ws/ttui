@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Set up authenticator{% endblock %}
+{% block content %}
+{{ heading('Set up authenticator', 'Scan the QR code or enter the key in your authenticator app.') }}
+<section class="card stack">
+  <figure class="connection-qr" aria-label="Authenticator setup QR code">{{ qr | safe }}</figure>
+  <p><code>{{ secret }}</code></p>
+  <form class="row" method="post" action="{{ url_for('mfa') }}">
+    {{ token() }}
+    <input type="hidden" name="enrollment" value="{{ enrollment }}">
+    <label>Authenticator code <input name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label>
+    <button class="primary" name="operation" value="enable">Enable authenticator</button>
+    <a class="button" href="{{ url_for('panel_settings') }}">Cancel</a>
+  </form>
+</section>
+{% endblock %}

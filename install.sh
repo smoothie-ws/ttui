@@ -192,7 +192,7 @@ backup_before_update() (
     snapshot_tool=$(mktemp -d "$panel/.snapshot-tool.XXXXXX")
     trap 'rm -rf -- "$snapshot_tool"' EXIT
     chmod 0755 "$snapshot_tool"
-    install -m 0644 "$source_dir/"{backend,backups,certificates,routing}.py "$snapshot_tool/"
+    install -m 0644 "$source_dir/"{auth,backend,backups,certificates,routing}.py "$snapshot_tool/"
     cd "$snapshot_tool"
     runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" -c '
 import sys
