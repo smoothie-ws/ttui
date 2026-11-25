@@ -5,11 +5,14 @@ import os
 import posixpath
 import re
 import secrets
+import shutil
 import stat
 import tarfile
+from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tempfile import NamedTemporaryFile, TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory, mkdtemp
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 from zlib import error as CompressionError
 
@@ -87,8 +90,9 @@ def sources(selected):
     if "routing" in selected:
         include(b.ROUTING, b.STATE, "state")
     if "geo" in selected:
-        for name in ("geoip.dat", "geosite.dat"):
-            include(b.GEO / name, b.STATE, "state")
+        for path in b.GEO.glob("*.dat"):
+            if b.GEOFILE_NAME.fullmatch(path.name) and not path.is_symlink():
+                include(path, b.STATE, "state")
     return files
 
 
@@ -279,7 +283,7 @@ def validate_certbot_archive(path):
         with tarfile.open(path, "r:gz") as archive:
             total = 0
             seen = set()
-            links = set()
+            links = {}
             for index, member in enumerate(archive):
                 parts = member.name.split("/")
                 if (index >= 10000 or parts[0] != "config" or any(part in ("", ".", "..") for part in parts)
@@ -295,18 +299,114 @@ def validate_certbot_archive(path):
                 if member.issym():
                     target = member.linkname
                     resolved = posixpath.normpath(posixpath.join(posixpath.dirname(member.name), target))
-                    if (posixpath.isabs(target) or "\\" in target or ":" in target
+                    if (not target or posixpath.isabs(target) or "\\" in target or ":" in target
                             or not resolved.startswith("config/")):
                         raise ValueError("Invalid Certbot archive symbolic link.")
-                    links.add(member.name)
+                    links[member.name] = target
             for name in seen:
                 parts = name.split("/")
                 if any("/".join(parts[:index]) in links for index in range(1, len(parts))):
                     raise ValueError("Certbot archive entries cannot be nested under symbolic links.")
             if "config" not in seen:
                 raise ValueError("Certbot archive is missing its configuration directory.")
+            # Individually relative links can still escape when one traverses another.
+            for name, target in links.items():
+                parts = name.split("/")[:-1]
+                pending = deque(target.split("/"))
+                followed = 0
+                while pending:
+                    part = pending.popleft()
+                    if part in ("", "."):
+                        continue
+                    if part == "..":
+                        if len(parts) == 1:
+                            raise ValueError("Invalid Certbot archive symbolic link.")
+                        parts.pop()
+                        continue
+                    parts.append(part)
+                    link = links.get("/".join(parts))
+                    if link is not None:
+                        followed += 1
+                        if followed > 40:
+                            raise ValueError("Invalid Certbot archive symbolic link.")
+                        parts.pop()
+                        pending.extendleft(reversed(link.split("/")))
     except (tarfile.TarError, OSError, EOFError, CompressionError) as error:
         raise ValueError("The Certbot archive is damaged.") from error
+
+
+def unpack_certbot(path, directory):
+    """Extract only previously validated regular files, directories and links."""
+    validate_certbot_archive(path)
+    with tarfile.open(path, "r:gz") as archive:
+        members = archive.getmembers()
+        for member in members:
+            if member.isdir():
+                (directory / member.name).mkdir(mode=0o700, parents=True, exist_ok=True)
+        for member in members:
+            target = directory / member.name
+            if member.isfile():
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                with archive.extractfile(member) as source, target.open("xb") as output:
+                    os.chmod(target, 0o600)
+                    shutil.copyfileobj(source, output, length=BLOCK_SIZE)
+        for member in members:
+            if member.issym():
+                target = directory / member.name
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                target.symlink_to(member.linkname)
+
+
+@contextmanager
+def restore_certbot(archive):
+    if archive is None:
+        yield lambda: None
+        return
+    parent = b.STATE / "acme"
+    if parent.is_symlink():
+        raise ValueError("The Certbot directory cannot be a symbolic link.")
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = parent / "config"
+    if target.is_symlink() or (target.exists() and not target.is_dir()):
+        raise ValueError("The Certbot configuration must be a directory.")
+    root = Path(mkdtemp(dir=parent, prefix=".restore-"))
+    previous = root / "previous"
+    success = False
+    try:
+        unpack_certbot(archive, root / "new")
+        existed = target.exists()
+        if existed:
+            target.rename(previous)
+        installed = False
+        rolled_back = False
+
+        def rollback():
+            nonlocal installed, rolled_back
+            if rolled_back:
+                return
+            if installed:
+                shutil.rmtree(target)
+                installed = False
+            if existed:
+                previous.rename(target)
+            rolled_back = True
+
+        try:
+            (root / "new" / "config").rename(target)
+            installed = True
+            yield rollback
+            success = True
+        except BaseException as error:
+            try:
+                rollback()
+            except Exception as recovery_error:
+                location = f" Previous configuration remains at {previous}." if previous.exists() else ""
+                raise RuntimeError(f"{error}\nCertbot recovery failed: {recovery_error}.{location}") from error
+            raise
+    finally:
+        # Keep the old configuration on disk if a rollback itself failed.
+        if success or not previous.exists():
+            shutil.rmtree(root)
 
 
 def verify(name):
@@ -378,7 +478,7 @@ def validate_restore(changes, components, current, client_address=None):
         allowed.add(b.ROUTING)
         changes.setdefault(b.ROUTING, json.dumps(DEFAULT_ROUTING))
     if "geo" in components:
-        allowed.update((b.GEO / "geoip.dat", b.GEO / "geosite.dat"))
+        allowed.update(path for path in changes if path.parent == b.GEO and b.GEOFILE_NAME.fullmatch(path.name))
     routing_changed = bool((allowed - {panel}) & changes.keys())
     if not ({"endpoint", "clients"} & components or routing_changed):
         if changes.keys() - allowed:
@@ -438,46 +538,52 @@ def validate_restore(changes, components, current, client_address=None):
 def restore(name, current, client_address=None):
     with TemporaryDirectory(dir=location(), prefix=".restore-") as directory:
         manifest, staged = verify_file(archive_path(name), Path(directory))
-        staged.pop("state/certbot-config.tar.gz", None)
-        changes = destinations(staged)
-        result = validate_restore(changes, set(manifest["components"]), current, client_address)
-        path, endpoint_changed, routing_changed, config = result
-        runtime_changed = endpoint_changed or routing_changed
-        endpoint_active = runtime_changed and b.service_state(b.ENDPOINT_UNIT) == "active"
-        router_active = runtime_changed and b.service_state(b.ROUTER_UNIT) == "active"
-        start_endpoint = endpoint_changed and (endpoint_active or (b.VPN in changes and b.HOSTS in changes))
-        touched = set()
+        certbot = staged.pop("state/certbot-config.tar.gz", None)
+        with restore_certbot(certbot) as rollback_certbot:
+            return restore_staged(manifest, staged, current, client_address, rollback_certbot)
 
-        def switch(action, unit):
-            touched.add(unit)
-            b.service(action, unit)
-            if action == "restart" and unit == b.ENDPOINT_UNIT:
-                b.active_endpoint()
 
-        def apply():
-            if config is not None and runtime_changed:
-                b.validate_xray(config)
-                if (routing_changed and (router_active or endpoint_active)) or start_endpoint:
-                    switch("restart", b.ROUTER_UNIT)
-            if start_endpoint:
-                switch("restart", b.ENDPOINT_UNIT)
-            if config is None and routing_changed and router_active:
-                switch("stop", b.ROUTER_UNIT)
+def restore_staged(manifest, staged, current, client_address, rollback_certbot):
+    changes = destinations(staged)
+    result = validate_restore(changes, set(manifest["components"]), current, client_address)
+    path, endpoint_changed, routing_changed, config = result
+    runtime_changed = endpoint_changed or routing_changed
+    endpoint_active = runtime_changed and b.service_state(b.ENDPOINT_UNIT) == "active"
+    router_active = runtime_changed and b.service_state(b.ROUTER_UNIT) == "active"
+    start_endpoint = endpoint_changed and (endpoint_active or (b.VPN in changes and b.HOSTS in changes))
+    touched = set()
 
-        def recover():
-            if b.ROUTER_UNIT in touched and router_active:
+    def switch(action, unit):
+        touched.add(unit)
+        b.service(action, unit)
+        if action == "restart" and unit == b.ENDPOINT_UNIT:
+            b.active_endpoint()
+
+    def apply():
+        if config is not None and runtime_changed:
+            b.validate_xray(config)
+            if (routing_changed and (router_active or endpoint_active)) or start_endpoint:
                 switch("restart", b.ROUTER_UNIT)
-            if b.ENDPOINT_UNIT in touched:
-                switch("restart" if endpoint_active else "stop", b.ENDPOINT_UNIT)
-            if b.ROUTER_UNIT in touched and not router_active:
-                switch("stop", b.ROUTER_UNIT)
+        if start_endpoint:
+            switch("restart", b.ENDPOINT_UNIT)
+        if config is None and routing_changed and router_active:
+            switch("stop", b.ROUTER_UNIT)
 
-        for target in changes:
-            if target != target.resolve():
-                raise ValueError("A backup destination passes through a symbolic link.")
-        for target in changes:
-            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        b.change_files(changes, apply, recover)
+    def recover():
+        rollback_certbot()
+        if b.ROUTER_UNIT in touched and router_active:
+            switch("restart", b.ROUTER_UNIT)
+        if b.ENDPOINT_UNIT in touched:
+            switch("restart" if endpoint_active else "stop", b.ENDPOINT_UNIT)
+        if b.ROUTER_UNIT in touched and not router_active:
+            switch("stop", b.ROUTER_UNIT)
+
+    for target in changes:
+        if target != target.resolve():
+            raise ValueError("A backup destination passes through a symbolic link.")
+    for target in changes:
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    b.change_files(changes, apply, recover)
     return path
 
 

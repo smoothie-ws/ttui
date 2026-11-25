@@ -13,21 +13,21 @@
   <form class="stack" method="post" action="{{ url_for('setup_endpoint') }}">
     {{ token() }}
     <div class="grid">
-      <label>VPN hostname <input name="hostname" required placeholder="vpn.example.com"></label>
-      <label>Listen IP address <input name="bind" required value="0.0.0.0"></label>
-      <label>Listen port <input name="port" type="number" min="1" max="65535" required value="{{ default_endpoint_port }}"></label>
-      <label>First client username <input name="username" maxlength="64" required placeholder="laptop"></label>
+      <label>VPN hostname <input name="hostname" required placeholder="vpn.example.com" value="{{ setup_form.get('hostname', '') }}"></label>
+      <label>Listen IP address <input name="bind" required value="{{ setup_form.get('bind', '0.0.0.0') }}"></label>
+      <label>Listen port <input name="port" type="number" min="1" max="65535" required value="{{ setup_form.get('port', default_endpoint_port) }}"></label>
+      <label>First client username <input name="username" maxlength="64" required placeholder="laptop" value="{{ setup_form.get('username', '') }}"></label>
     </div>
-    <label class="check"><input type="checkbox" name="quic"> Enable HTTP/3 (QUIC)</label>
-    <details>
+    <label class="check"><input type="checkbox" name="quic" {% if setup_form.get('quic') %}checked{% endif %}> Enable HTTP/3 (QUIC)</label>
+    <details {% if setup_form.get('cert_chain_path') or setup_form.get('private_key_path') %}open{% endif %}>
       <summary>Use an existing TLS certificate</summary>
       <div class="details-body grid">
-        <label>Certificate chain <input name="cert_chain_path" placeholder="certs/fullchain.pem"></label>
-        <label>Private key <input name="private_key_path" placeholder="certs/privkey.pem"></label>
+        <label>Certificate chain <input name="cert_chain_path" placeholder="certs/fullchain.pem" value="{{ setup_form.get('cert_chain_path', '') }}"></label>
+        <label>Private key <input name="private_key_path" placeholder="certs/privkey.pem" value="{{ setup_form.get('private_key_path', '') }}"></label>
       </div>
     </details>
     {% include "acme_fields.html" %}
-    <p class="subtle">ttui generates the first client password. With no certificate paths or ACME email, it generates a self-signed certificate.</p>
+    <p class="subtle">ttui generates the first client password. With no certificate paths or ACME email, it generates a self-signed certificate, which is included in client exports.</p>
     <div><button class="primary">Start TrustTunnel</button></div>
   </form>
 </section>

@@ -1,10 +1,11 @@
 {% if acme_enabled %}
-<details>
+{% set setup = setup_form|default({}) %}
+<details {% if setup.get('acme_email') %}open{% endif %}>
   <summary>Issue and renew with Let's Encrypt</summary>
   <div class="details-body stack">
     <p class="subtle">Point the VPN hostname to this server and allow public HTTP on TCP port 80. Leave the email blank to use a PEM pair instead.</p>
-    <label>ACME contact email <input name="acme_email" type="email" maxlength="254"></label>
-    <label class="check"><input name="acme_terms" type="checkbox"> I accept the <a href="https://letsencrypt.org/repository/" rel="noreferrer">Let's Encrypt subscriber agreement</a>.</label>
+    <label>ACME contact email <input name="acme_email" type="email" maxlength="254" value="{{ setup.get('acme_email', '') }}"></label>
+    <label class="check"><input name="acme_terms" type="checkbox" {% if setup.get('acme_terms') %}checked{% endif %}> I accept the <a href="https://letsencrypt.org/repository/" rel="noreferrer">Let's Encrypt subscriber agreement</a>.</label>
   </div>
 </details>
 {% endif %}

@@ -172,6 +172,11 @@ def action(page):
                     return function(*args, **kwargs)
             except OPERATION_ERRORS as error:
                 request.environ["ttui.action_failed"] = True
+                if function.__name__ == "setup_endpoint":
+                    fields = ("hostname", "bind", "port", "username", "cert_chain_path", "private_key_path", "acme_email")
+                    session["setup_form"] = {key: value for key in fields
+                                             if len((value := request.form.get(key, "")).encode("utf-8")) <= 254}
+                    session["setup_form"].update({key: bool(request.form.get(key)) for key in ("quic", "acme_terms")})
                 flash(str(error), "error")
                 return redirect(url_for(page))
         return wrapped
@@ -544,6 +549,7 @@ def render_server(source, version, error=None):
     return render_template("server.html", source=source, revision=version, save_error=error,
                            routed=b.load_routing()["enabled"], launch=b.launch_options(),
                            can_setup=not b.VPN.exists() and not b.HOSTS.exists(),
+                           setup_form=session.pop("setup_form", {}),
                            acme_enabled=acme.enabled(),
                            default_endpoint_port=8443 if PUBLIC_HTTPS else 443)
 
@@ -681,7 +687,7 @@ def save_launch():
 @action("server")
 def setup_endpoint():
     if b.VPN.exists() or b.HOSTS.exists():
-        raise ValueError("Endpoint configuration already exists. Use the TOML editor to change it.")
+        raise ValueError("Endpoint configuration already exists. Open Server settings to manage it.")
     form = request.form
     hostname = tls.hostname(form.get("hostname", ""))
     address = ip_address(form.get("bind", "").strip())
@@ -702,6 +708,8 @@ def setup_endpoint():
     if form.get("quic"):
         vpn["listen_protocols"]["quic"] = {}
     credentials, _ = b.related(vpn)
+    if credentials.exists() or credentials.is_symlink():
+        raise ValueError("Setup cannot overwrite the existing client credentials file.")
     changes = {credentials: tomlkit.dumps({"client": [{"username": username, "password": password}]})}
     cert, key = (form.get(field, "").strip() for field in ("cert_chain_path", "private_key_path"))
     if email := form.get("acme_email", "").strip():
@@ -778,17 +786,28 @@ def update_tls_host():
         record = records.pop(index)
     changes = {}
     details = {}
+    vpn = read_vpn()
+    subscription = vpn.get("subscription", {})
+    if (operation != "create" and source == "main_hosts" and isinstance(subscription, dict)
+            and record.get("hostname") == subscription.get("hostname")
+            and (operation == "delete" or target != "main_hosts"
+                 or tls.hostname(form.get("hostname", "")) != subscription.get("hostname"))):
+        raise ValueError("Update the subscription hostname in Endpoint settings before changing this TLS host.")
     if operation == "delete" and not hosts.get("main_hosts"):
         raise ValueError("Keep at least one VPN TLS host.")
     if operation != "delete":
         name = tls.hostname(form.get("hostname", ""))
+        if target != "main_hosts" and not hosts.get("main_hosts"):
+            raise ValueError("Keep at least one VPN TLS host.")
         if target not in hosts:
             hosts[target] = tomlkit.aot()
         records = hosts[target]
         if not isinstance(records, list):
             raise ValueError("Fix the TLS host table in the advanced editor first.")
-        if any(host.get("hostname", "").casefold() == name for host in records):
-            raise ValueError("This hostname already exists in the selected group.")
+        if any(isinstance(host, dict) and isinstance(host.get("hostname"), str)
+               and host["hostname"].casefold() == name
+               for group in HOST_TYPES for host in (hosts.get(group) if isinstance(hosts.get(group), list) else [])):
+            raise ValueError("This hostname already exists in another TLS host entry.")
         cert_upload, key_upload = (request.files.get(key) for key in ("certificate", "private_key"))
         if email := form.get("acme_email", "").strip():
             if cert_upload or key_upload or not form.get("acme_terms"):
@@ -812,7 +831,7 @@ def update_tls_host():
                        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), **details})
     changes[history_file] = json.dumps(history[:50], ensure_ascii=False, indent=2) + "\n"
     changes[b.HOSTS] = tomlkit.dumps(hosts)
-    b.apply_endpoint(changes, read_vpn())
+    b.apply_endpoint(changes, vpn)
     return saved("tls_hosts", "TLS hosts updated.")
 
 
@@ -844,10 +863,13 @@ def save_routing():
     source = request.form.get("spec", "")
     try:
         spec = json.loads(source)
-        if request.form.get("operation") == "validate":
+        operation = request.form.get("operation")
+        if operation == "validate":
             b.validate_xray(compile_routing(spec)[0])
             flash("Xray accepted the proposed configuration.")
             return render_routing(source, request.form["revision"])
+        if operation != "apply":
+            raise ValueError("Choose whether to validate or apply routing.")
         b.apply_routing(spec)
     except OPERATION_ERRORS as error:
         return render_routing(source, request.form["revision"], str(error)), 400
@@ -858,7 +880,7 @@ def save_routing():
 @action("routing")
 def upload_geo():
     upload = request.files.get("data")
-    if not upload or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.dat", upload.filename or ""):
+    if not upload or not b.GEOFILE_NAME.fullmatch(upload.filename or ""):
         raise ValueError("Select an Xray .dat file.")
     if not upload.stream.read(1):
         raise ValueError("The file is empty.")

@@ -52,6 +52,17 @@ class BackupsTest(unittest.TestCase):
         self.assertEqual(history[0][0], name)
         self.assertEqual(history[0][1]["components"], ["clients", "geo"])
 
+    def test_backup_and_restore_custom_geofile(self):
+        geo = b.GEO / "custom-sites.dat"
+        geo.write_bytes(b"original geodata")
+        archive = backups.create(["geo"], "0.1.0")
+        with ZipFile(backups.archive_path(archive)) as snapshot:
+            self.assertEqual(snapshot.read("state/geo/custom-sites.dat"), b"original geodata")
+        geo.write_bytes(b"modified geodata")
+        with patch.object(b, "service_state", return_value="inactive"):
+            backups.restore(archive, {})
+        self.assertEqual(geo.read_bytes(), b"original geodata")
+
     def test_endpoint_backup_contains_certbot_configuration(self):
         b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
         directory = self.state / "acme" / "config" / "renewal"
@@ -78,6 +89,52 @@ class BackupsTest(unittest.TestCase):
         with ZipFile(backups.archive_path(name)) as archive:
             self.assertNotIn("state/certbot-config.tar.gz", archive.namelist())
             self.assertNotIn("certbot_manual_restore", json.loads(archive.read(backups.MANIFEST)))
+
+    def test_certbot_restore_and_rollback(self):
+        config = self.state / "acme" / "config"
+        config.mkdir(parents=True)
+        (config / "old").write_text("old", encoding="utf-8")
+        source = self.state / "source"
+        source.mkdir()
+        (source / "new").write_text("new", encoding="utf-8")
+        archive = self.state / "certbot.tar.gz"
+        with tarfile.open(archive, "w:gz") as output:
+            output.add(source, arcname="config")
+        with self.assertRaisesRegex(RuntimeError, "failed"):
+            with backups.restore_certbot(archive):
+                self.assertEqual((config / "new").read_text(encoding="utf-8"), "new")
+                raise RuntimeError("failed")
+        self.assertEqual((config / "old").read_text(encoding="utf-8"), "old")
+        with backups.restore_certbot(archive):
+            self.assertEqual((config / "new").read_text(encoding="utf-8"), "new")
+        self.assertFalse((config / "old").exists())
+
+    def test_failed_certbot_rollback_keeps_previous_configuration_and_reports_its_path(self):
+        config = self.state / "acme" / "config"
+        config.mkdir(parents=True)
+        (config / "old").write_text("old", encoding="utf-8")
+        source = self.state / "source"
+        source.mkdir()
+        (source / "new").write_text("new", encoding="utf-8")
+        archive = self.state / "certbot.tar.gz"
+        with tarfile.open(archive, "w:gz") as output:
+            output.add(source, arcname="config")
+        original_rename = Path.rename
+
+        def fail_recovery(path, target):
+            if path.name == "previous":
+                raise PermissionError("rename denied")
+            return original_rename(path, target)
+
+        with patch.object(Path, "rename", fail_recovery):
+            with self.assertRaisesRegex(RuntimeError, "Certbot recovery failed.*rename denied") as failure:
+                with backups.restore_certbot(archive) as rollback:
+                    with self.assertRaises(PermissionError):
+                        rollback()
+                    raise RuntimeError("service failed")
+        previous = next((self.state / "acme").glob(".restore-*/previous"))
+        self.assertIn(str(previous), str(failure.exception))
+        self.assertEqual((previous / "old").read_text(encoding="utf-8"), "old")
 
     def test_certbot_files_are_not_reported_as_missing_external_files(self):
         b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
@@ -157,6 +214,22 @@ class BackupsTest(unittest.TestCase):
             archive.addfile(entry)
         with self.assertRaisesRegex(ValueError, "symbolic link"):
             backups.validate_certbot_archive(path)
+
+    def test_certbot_archive_rejects_indirect_link_escape_and_cycles(self):
+        path = self.state / "links.tar.gz"
+        for links in ((('config/x/a', '../z'), ('config/x/b', 'a/../../outside')),
+                      (('config/a', 'b'), ('config/b', 'a'))):
+            with self.subTest(links=links), tarfile.open(path, "w:gz") as archive:
+                root = tarfile.TarInfo("config")
+                root.type = tarfile.DIRTYPE
+                archive.addfile(root)
+                for name, target in links:
+                    link = tarfile.TarInfo(name)
+                    link.type = tarfile.SYMTYPE
+                    link.linkname = target
+                    archive.addfile(link)
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                backups.validate_certbot_archive(path)
 
     def test_import_rejects_certbot_link_even_with_matching_checksum(self):
         nested = BytesIO()
@@ -333,6 +406,63 @@ class BackupsTest(unittest.TestCase):
         self.assertEqual(readies, [captured, current])
         self.assertEqual(b.read(credentials), current)
         self.assertFalse((self.state / "clients.json").exists())
+
+    def test_restore_endpoint_restores_certbot_before_validation_and_rolls_back_before_restart(self):
+        config = self.state / "acme" / "config"
+        config.mkdir(parents=True)
+        cert, key = config / "cert.pem", config / "key.pem"
+        cert.write_text("archived certificate", encoding="utf-8")
+        key.write_text("archived key", encoding="utf-8")
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\ncredentials_file = "credentials.toml"\n', encoding="utf-8")
+        (self.config / "credentials.toml").write_text('', encoding="utf-8")
+        b.HOSTS.write_text(tomlkit.dumps({"main_hosts": [{"hostname": "test.example",
+                           "cert_chain_path": str(cert), "private_key_path": str(key)}]}), encoding="utf-8")
+        archive = backups.create(["endpoint", "clients"], "0.1.0")
+        cert.write_text("current certificate", encoding="utf-8")
+        key.write_text("current key", encoding="utf-8")
+        restarts = []
+
+        def validate(certificate, private_key, host):
+            self.assertEqual(host, "test.example")
+            self.assertEqual(certificate.read_text(encoding="utf-8"), "archived certificate")
+            self.assertEqual(private_key.read_text(encoding="utf-8"), "archived key")
+
+        def ready():
+            restarts.append(cert.read_text(encoding="utf-8"))
+            if len(restarts) == 1:
+                raise RuntimeError("Startup failed")
+
+        with patch.object(backups.tls, "validate", side_effect=validate), \
+                patch.object(b, "service_state", side_effect=lambda unit: "active" if unit == b.ENDPOINT_UNIT else "inactive"), \
+                patch.object(b, "service"), patch.object(b, "active_endpoint", side_effect=ready):
+            with self.assertRaisesRegex(RuntimeError, "Startup failed"):
+                backups.restore(archive, {})
+        self.assertEqual(restarts, ["archived certificate", "current certificate"])
+        self.assertEqual(key.read_text(encoding="utf-8"), "current key")
+        with patch.object(backups.tls, "validate", side_effect=validate), \
+                patch.object(b, "service_state", return_value="inactive"), \
+                patch.object(b, "service"), patch.object(b, "active_endpoint"):
+            backups.restore(archive, {})
+        self.assertEqual(cert.read_text(encoding="utf-8"), "archived certificate")
+        self.assertEqual(key.read_text(encoding="utf-8"), "archived key")
+
+    @unittest.skipUnless(os.name == "posix", "Certificate symlinks require POSIX")
+    def test_restore_certbot_preserves_certificate_symlinks(self):
+        config = self.state / "acme" / "config"
+        archive_dir = config / "archive" / "test.example"
+        live = config / "live" / "test.example"
+        archive_dir.mkdir(parents=True)
+        live.mkdir(parents=True)
+        (archive_dir / "fullchain1.pem").write_text("certificate", encoding="utf-8")
+        (live / "fullchain.pem").symlink_to("../../archive/test.example/fullchain1.pem")
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        name = backups.create(["endpoint"], "0.1.0")
+        (archive_dir / "fullchain1.pem").write_text("changed", encoding="utf-8")
+        with TemporaryDirectory() as directory:
+            _, staged = backups.verify_file(backups.archive_path(name), Path(directory))
+            with backups.restore_certbot(staged["state/certbot-config.tar.gz"]):
+                self.assertTrue((live / "fullchain.pem").is_symlink())
+                self.assertEqual((live / "fullchain.pem").read_text(encoding="utf-8"), "certificate")
 
     def test_rejects_archive_paths_outside_configuration(self):
         source = BytesIO()

@@ -29,6 +29,7 @@ XRAY = os.environ.get("TTUI_XRAY", "/opt/ttui/xray/xray")
 VPN, HOSTS, ROUTING = CONFIG / "vpn.toml", CONFIG / "hosts.toml", STATE / "routing.json"
 LAUNCH = STATE / "endpoint.json"
 GEO = STATE / "geo"
+GEOFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.dat")
 ENDPOINT_UNIT, ROUTER_UNIT = "trusttunnel.service", "ttui-router.service"
 SYSTEMCTL = os.environ.get("TTUI_SYSTEMCTL", "/usr/bin/systemctl")
 

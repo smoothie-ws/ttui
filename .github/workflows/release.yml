@@ -27,7 +27,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          git merge-base --is-ancestor HEAD origin/main
+          git merge-base --is-ancestor HEAD origin/dev
           bash scripts/package.sh "$RELEASE_TAG"
       - uses: actions/setup-python@v7
         with:

@@ -14,7 +14,7 @@ sudo bash install.sh --source "$PWD" --domain panel.example.com
 
 Run the command from a checkout that includes browser-first setup. Point the panel domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy. The installer starts the web panel and prints its HTTPS URL and sign-in details. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. On a fresh server, the VPN endpoint stays unconfigured until you complete setup in the browser.
 
-Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, listen IP and port, and the first client username. Point the VPN hostname at the server and open the endpoint port for TCP and, for HTTP/3, UDP. Use an existing TLS certificate or let ttui generate a self-signed one. After setup, go to **Clients** to export the first connection.
+Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, listen IP and port, and the first client username. Point the VPN hostname at the server and open the endpoint port for TCP and, for HTTP/3, UDP. Use an existing TLS certificate or let ttui generate a self-signed one. TrustTunnel includes a self-signed certificate in client exports so clients can verify the endpoint. After setup, go to **Clients** to export the first connection.
 
 For a fresh installation with managed Caddy HTTPS, the setup form and **TLS & Certificates** also offer Let's Encrypt. Point the VPN hostname at this server and open TCP port 80 for HTTP-01. Use a separate VPN hostname from the panel hostname. Certbot stores VPN certificates privately under `/var/lib/ttui/acme`, and `ttui-acme.timer` runs renewal checks and reloads an active endpoint after a validated certificate change.
 
@@ -63,7 +63,7 @@ For an older installation without the `ttui` command, run the installer again. I
 
 ## Backups
 
-Use **Backups** to select configuration components, create a ZIP archive, verify its SHA-256 checksums, and download a copy. ttui stores archives under `/var/lib/ttui/backups` with private permissions. Archives include passwords and private keys. Keep off-server copies in protected storage. Endpoint backups include Certbot configuration in `state/certbot-config.tar.gz` when available. Restore that archive separately to `/var/lib/ttui/acme` before restoring the Endpoint. Retain a separate backup of other certificate files stored outside `/etc/trusttunnel`.
+Use **Backups** to select configuration components, create a ZIP archive, verify its SHA-256 checksums, and download a copy. ttui stores archives under `/var/lib/ttui/backups` with private permissions. Archives include passwords and private keys. Keep off-server copies in protected storage. Endpoint backups include and restore Certbot configuration when available. Geodata backups include supported custom `.dat` files as well as `geoip.dat` and `geosite.dat`. Retain a separate backup of other certificate files stored outside `/etc/trusttunnel`.
 
 Import a trusted ttui archive in **Backups**, then select **Restore** and confirm with your current administrator password. Browser imports must fit within the panel's 64 MiB request limit. Restoring replaces the matching managed files. Active services may restart, and ttui restores the previous files if they fail to start. A full Endpoint snapshot can also start a stopped Endpoint. Restoring panel settings signs out existing sessions and switches to the archived panel path and login credentials.
 
@@ -71,7 +71,7 @@ Under **Automatic backups**, choose a daily or weekly schedule and the component
 
 ## Releases
 
-Work takes place on the `dev` branch. GitHub Actions runs on pushes to `dev` and `main`, and on pull requests. CI checks Python, JavaScript, and Bash, then tests installation, updates, and rollback on Linux. To prepare a stable release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md) on `dev`. After the reviewed changes reach `main`, push the matching SemVer tag from a commit in the history of `main`.
+Work takes place on the `dev` branch. GitHub Actions runs on pushes to `dev` and `main`, and on pull requests. CI checks Python, JavaScript, and Bash, then tests installation, updates, and rollback on Linux. To prepare a stable release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md) on `dev`. After the changes pass review and CI, push the matching SemVer tag from a commit in the history of `dev`.
 
 ```bash
 git tag -a v0.1.0 -m "ttui v0.1.0"

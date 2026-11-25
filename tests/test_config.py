@@ -21,6 +21,14 @@ from routing import DEFAULT_ROUTING, FIRST_CASCADE_PORT, ROUTER_ADDRESS, compile
 
 
 class ConfigTest(unittest.TestCase):
+    def test_routing_keeps_rule_priority_and_blocking_fallback(self):
+        rules = [{"outboundTag": "direct", "domain": [r"regexp:^vpn\.example$"]},
+                 {"outboundTag": "direct", "ip": ["geoip:private", "ext:custom.dat:local"]}]
+        spec = {**DEFAULT_ROUTING, "enabled": True, "default": "block", "rules": rules}
+        config, _ = compile_routing(spec)
+        self.assertEqual(config["outbounds"][0]["tag"], "block")
+        self.assertEqual(config["routing"]["rules"], [{**rule, "type": "field"} for rule in rules])
+
     def test_structured_cascade_compiles_to_native_client_and_socks_outbound(self):
         remote = {"hostname": "vpn.example.com", "addresses": ["vpn.example.com:443"],
                   "username": "client", "password": "secret", "upstream_protocol": "http3"}
@@ -83,6 +91,51 @@ class ConfigTest(unittest.TestCase):
             self.assertTrue(acme.webroot().is_dir())
             self.assertIn("--keep-until-expiring", certbot.call_args.args)
             verify.assert_called_once_with(*pair.values(), host)
+
+    def test_tls_hostname_must_be_unique_across_groups_before_issuing_certificate(self):
+        b.HOSTS.write_text('[[main_hosts]]\nhostname = "vpn.example.com"\n', encoding="utf-8")
+        fields = {"revision": panel.revision(b.read(b.HOSTS)), "operation": "create", "group": "ping_hosts",
+                  "hostname": "VPN.EXAMPLE.COM", "acme_email": "admin@example.com", "acme_terms": "on"}
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), patch.object(panel.acme, "issue") as issue:
+            with panel.app.test_request_context("/tls", method="POST", data=fields):
+                self.assertEqual(panel.update_tls_host().status_code, 302)
+                self.assertIn("already exists", panel.session["_flashes"][0][1])
+            issue.assert_not_called()
+        self.assertNotIn("ping_hosts", tomlkit.parse(b.read(b.HOSTS)))
+        self.service.assert_not_called()
+
+    def test_moving_last_main_host_is_rejected_before_issuing_certificate(self):
+        b.HOSTS.write_text('[[main_hosts]]\nhostname = "vpn.example.com"\n', encoding="utf-8")
+        fields = {"revision": panel.revision(b.read(b.HOSTS)), "operation": "edit", "source": "main_hosts",
+                  "index": "0", "group": "ping_hosts", "hostname": "ping.example.com",
+                  "acme_email": "admin@example.com", "acme_terms": "on"}
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), patch.object(panel.acme, "issue") as issue:
+            with panel.app.test_request_context("/tls", method="POST", data=fields):
+                self.assertEqual(panel.update_tls_host().status_code, 302)
+                self.assertIn("at least one VPN TLS host", panel.session["_flashes"][0][1])
+            issue.assert_not_called()
+        self.service.assert_not_called()
+
+    def test_subscription_host_cannot_be_renamed_or_deleted_before_updating_subscription(self):
+        b.VPN.write_text('[subscription]\nenabled = false\nhostname = "vpn.example.com"\n'
+                         'address = "vpn.example.com:443"\n', encoding="utf-8")
+        original = ('[[main_hosts]]\nhostname = "vpn.example.com"\n'
+                    '[[main_hosts]]\nhostname = "other.example.com"\n')
+        b.HOSTS.write_text(original, encoding="utf-8")
+        common = {"revision": panel.revision(original), "source": "main_hosts", "index": "0"}
+        cases = ({"operation": "delete"},
+                 {"operation": "edit", "group": "main_hosts", "hostname": "new.example.com",
+                  "acme_email": "admin@example.com", "acme_terms": "on"},
+                 {"operation": "edit", "group": "ping_hosts", "hostname": "vpn.example.com"})
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), patch.object(panel.acme, "issue") as issue:
+            for fields in cases:
+                with self.subTest(operation=fields), panel.app.test_request_context(
+                        "/tls", method="POST", data={**common, **fields}):
+                    self.assertEqual(panel.update_tls_host().status_code, 302)
+                    self.assertIn("Update the subscription hostname", panel.session["_flashes"][0][1])
+            issue.assert_not_called()
+        self.assertEqual(b.read(b.HOSTS), original)
+        self.service.assert_not_called()
 
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is required for TLS certificate tests")
     def test_uploaded_tls_pair_is_validated_and_rolled_back_on_restart_failure(self):
@@ -334,6 +387,18 @@ class ConfigTest(unittest.TestCase):
         self.assertFalse(b.VPN.exists())
         self.service.assert_not_called()
 
+    def test_routing_requires_an_explicit_apply_operation(self):
+        spec = {**DEFAULT_ROUTING, "default": "block"}
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), patch.object(b, "apply_routing") as apply:
+            for operation in ("", "unexpected"):
+                fields = {"revision": panel.revision(b.load_routing()), "spec": json.dumps(spec),
+                          "operation": operation}
+                with panel.app.test_request_context("/routing", method="POST", data=fields):
+                    body, status = panel.save_routing()
+                    self.assertEqual(status, 400)
+                    self.assertIn("Choose whether to validate or apply routing", body)
+            apply.assert_not_called()
+
     def test_initial_setup_writes_config_and_preserves_it_on_retry(self):
         def certificate(args):
             for option in ("-out", "-keyout"):
@@ -350,6 +415,43 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(b.configured_clients(vpn)[0]["username"], "first")
         self.assertEqual((self.directory / "endpoint-key.pem").read_bytes(), b"generated PEM")
         self.service.assert_called_once_with("restart", b.ENDPOINT_UNIT)
+
+    def test_setup_checks_existing_credentials_before_requesting_certificate(self):
+        credentials = self.directory / "credentials.toml"
+        credentials.write_text("existing credentials", encoding="utf-8")
+        fields = {"hostname": "vpn.example.com", "bind": "0.0.0.0", "port": "8443",
+                  "username": "first", "acme_email": "admin@example.com", "acme_terms": "on"}
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), patch.object(panel.acme, "issue") as issue:
+            with panel.app.test_request_context("/setup", method="POST", data=fields):
+                response = panel.setup_endpoint()
+                self.assertEqual(response.status_code, 302)
+                self.assertIn("cannot overwrite", panel.session["_flashes"][0][1])
+        issue.assert_not_called()
+        self.assertEqual(credentials.read_text(encoding="utf-8"), "existing credentials")
+        self.assertFalse(b.VPN.exists())
+        self.service.assert_not_called()
+
+    def test_setup_error_preserves_fields_until_the_form_is_shown(self):
+        config = {"path": "/ttui", "secret": "secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("example", method="pbkdf2:sha256:1000")}
+        with patch.object(panel, "settings", return_value=config), patch.dict(panel.app.config, SECRET_KEY="secret"), \
+                patch.dict("os.environ", TTUI_ACME="1"):
+            client = panel.app.test_client()
+            login = client.get("/ttui/login")
+            token = re.search(rb'name="csrf" value="([^"]+)"', login.data)[1].decode()
+            client.post("/ttui/login", data={"csrf": token, "username": "admin", "password": "example"})
+            token = re.search(rb'name="csrf" value="([^"]+)"', client.get("/ttui/server").data)[1].decode()
+            response = client.post("/ttui/setup", data={"csrf": token, "hostname": "vpn.example.com",
+                                   "bind": "127.0.0.1", "port": "65536", "username": "laptop",
+                                   "quic": "on", "acme_email": "admin@example.com", "acme_terms": "on"},
+                                   follow_redirects=True)
+            self.assertIn(b"Enter a port from 1 to 65535", response.data)
+            self.assertIn(b'name="hostname" required placeholder="vpn.example.com" value="vpn.example.com"', response.data)
+            self.assertIn(b'name="username" maxlength="64" required placeholder="laptop" value="laptop"', response.data)
+            self.assertIn(b'name="acme_email" type="email" maxlength="254" value="admin@example.com"', response.data)
+            self.assertIn(b'name="quic" checked', response.data)
+            self.assertIn(b'name="acme_terms" type="checkbox" checked', response.data)
+            self.assertNotIn(b'value="vpn.example.com"', client.get("/ttui/server").data)
 
     def test_routing_does_not_start_stopped_services(self):
         self.write_vpn()
