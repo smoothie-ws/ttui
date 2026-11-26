@@ -27,7 +27,8 @@ for _ in {1..30}; do
     sleep 1
 done
 sudo cat /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt >"$work/root.crt"
-python3 - "$work/install.log" "$work/root.crt" <<'PY'
+sudo cat /root/ttui-signin.txt >"$work/signin.txt"
+python3 - "$work/install.log" "$work/root.crt" "$work/signin.txt" <<'PY'
 import re
 import ssl
 import sys
@@ -36,7 +37,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import HTTPSHandler, HTTPCookieProcessor, ProxyHandler, build_opener
 
-password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[1]).read_text(), re.M)[1]
+password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[3]).read_text(), re.M)[1]
 context = ssl.create_default_context(cafile=sys.argv[2])
 client = build_opener(ProxyHandler({}), HTTPSHandler(context=context), HTTPCookieProcessor(CookieJar()))
 base = "https://localhost/ttui"
