@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 from playwright.sync_api import expect, sync_playwright
 
-password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[1]).read_text(), re.M)[1]
+password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[2]).read_text(), re.M)[1]
 base = "http://127.0.0.1:8080/ttui"
 
 with sync_playwright() as playwright:
