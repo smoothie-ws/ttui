@@ -17,6 +17,7 @@ import tomlkit
 
 import backups
 import backend as b
+import app as panel
 from routing import DEFAULT_ROUTING
 
 
@@ -381,6 +382,22 @@ class BackupsTest(unittest.TestCase):
         self.assertEqual(restored["secret"], "current-key")
         self.assertEqual(restored["password_hash"], captured["password_hash"])
         self.assertTrue(restored["session_epoch"])
+
+    def test_deleting_backup_requires_current_password_and_valid_name(self):
+        (self.state / "panel.json").write_text("{}", encoding="utf-8")
+        name = backups.create(["panel"], "0.1.0")
+        config = {"password_hash": generate_password_hash("correct", method="pbkdf2:sha256:1000")}
+        with patch.object(panel, "settings", return_value=config), patch.dict(panel.app.config, SECRET_KEY="secret"):
+            for filename, password in ((name, "wrong"), ("../outside.zip", "correct")):
+                with self.subTest(filename=filename), panel.app.test_request_context(
+                        "/backups", method="POST", data={"operation": "delete", "name": filename,
+                                                         "current_password": password}):
+                    self.assertEqual(panel.backups().status_code, 302)
+                    self.assertTrue(backups.archive_path(name).is_file())
+            with panel.app.test_request_context("/backups", method="POST", data={"operation": "delete",
+                                                "name": name, "current_password": "correct"}):
+                self.assertEqual(panel.backups().status_code, 302)
+        self.assertFalse((backups.location() / name).exists())
 
     def test_restore_endpoint_rolls_back_files_and_restarts_original_service(self):
         credentials = self.config / "credentials.toml"

@@ -145,6 +145,10 @@ subprocess.run(["sudo", "-u", "ttui", "tee", geo_path], input=b"changed", stdout
 assert "Backup restored." in submit("/backups", geo_backup, operation="restore", name=geo_archive,
                                    current_password=password)
 assert subprocess.check_output(["sudo", "-u", "ttui", "cat", geo_path]) == geo_data
+assert "Enter your current administrator password." in submit("/backups", get("/backups"), operation="delete",
+                                                               name=geo_archive, current_password="wrong")
+assert "Backup deleted." in submit("/backups", get("/backups"), operation="delete", name=geo_archive,
+                                   current_password=password)
 before_backup = get("/backups")
 backup = submit("/backups", before_backup, operation="create", component=["endpoint", "clients"])
 assert "Backup created." in backup

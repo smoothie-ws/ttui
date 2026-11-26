@@ -458,6 +458,11 @@ def backups():
                 raise ValueError("Choose a ttui backup ZIP file.")
             snapshots.import_archive(upload.stream)
             return saved("backups", "Backup imported and verified.")
+        if operation == "delete":
+            if not check_password_hash(request_settings()["password_hash"], request.form.get("current_password", "")):
+                raise ValueError("Enter your current administrator password.")
+            snapshots.archive_path(request.form.get("name", "")).unlink()
+            return saved("backups", "Backup deleted.")
         if operation == "restore":
             config = request_settings()
             if not check_password_hash(config["password_hash"], request.form.get("current_password", "")):

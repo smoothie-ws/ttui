@@ -66,6 +66,14 @@
       <button name="operation" value="verify">Verify integrity</button>
       <a class="button" href="{{ url_for('download_backup', name=name) }}">Download</a>
     </form>
+    <details>
+      <summary>Delete backup</summary>
+      <form method="post" class="stack" data-confirm="Permanently delete this backup?">
+        {{ token() }}<input type="hidden" name="name" value="{{ name }}">
+        <label>Current administrator password <input type="password" name="current_password" autocomplete="current-password" required></label>
+        <div><button class="danger" name="operation" value="delete">Delete backup</button></div>
+      </form>
+    </details>
     {% if archive %}
     <details>
       <summary>Restore</summary>

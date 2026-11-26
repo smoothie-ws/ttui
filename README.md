@@ -69,7 +69,7 @@ Use **Backups** to select configuration components, create a ZIP archive, verify
 
 Import a trusted ttui archive in **Backups**, then select **Restore** and confirm with your current administrator password. Browser imports must fit within the panel's 64 MiB request limit. Restoring replaces the matching managed files. Active services may restart, and ttui restores the previous files if they fail to start. A full Endpoint snapshot can also start a stopped Endpoint. Restoring panel settings signs out existing sessions and switches to the archived panel path and login credentials.
 
-Under **Automatic backups**, choose a daily or weekly schedule and the components to include. ttui keeps the seven newest automatic copies. The installer also creates a configuration snapshot before updating an existing installation. These copies appear in **Backup history**.
+Under **Automatic backups**, choose a daily or weekly schedule and the components to include. ttui keeps the seven newest automatic copies. The installer also creates a configuration snapshot before updating an existing installation. These copies appear in **Backup history**, where you can delete unneeded archives after confirming your administrator password.
 
 ## Releases
 
