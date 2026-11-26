@@ -598,25 +598,29 @@ def routing_enabled():
     except OPERATION_ERRORS:
         return False
 
-def quick_setup_hostname():
-    """Offer one-click setup when the panel is opened through a real DNS name."""
+def request_host():
+    """The panel host without its port, lowercased."""
     host = request.host
     if host.startswith("[") and "]" in host:
-        host = host[1:host.index("]")]
-    else:
-        host = host.split(":", 1)[0]
-    host = host.strip().lower()
+        return host[1:host.index("]")].strip().lower()
+    return host.split(":", 1)[0].strip().lower()
+
+def quick_setup():
+    """Offer one-click node creation for this server, with or without a DNS name."""
+    host = request_host()
     if not host or host == "localhost":
         return None
+    port = 8443 if PUBLIC_HTTPS else 443
     try:
         ip_address(host)
-        return None
     except ValueError:
-        pass
-    try:
-        return tls.hostname(host)
-    except ValueError:
-        return None
+        try:
+            name = tls.hostname(host)
+        except ValueError:
+            return None
+        return {"hostname": name, "address": "", "target": f"{name}:{port}"}
+    # Opened by IP: keep a DNS label for TLS SNI and connect clients to the IP.
+    return {"hostname": "vpn.local", "address": f"{host}:{port}", "target": f"{host}:{port}"}
 
 def render_endpoint_page(preview=None, candidate=None, source=None, source_revision=None, save_error=None,
                          raw=None, vpn=None, hosts_raw=None, routing_raw=None):
@@ -634,10 +638,14 @@ def render_endpoint_page(preview=None, candidate=None, source=None, source_revis
         source_revision=source_revision or revision(source), launch=b.launch_options(), save_error=save_error)
 
 def render_setup_page():
-    return render_template("endpoint.html", can_setup=True, setup_form=session.pop("setup_form", {}),
+    setup = quick_setup()
+    form = session.pop("setup_form", {})
+    if setup and setup["address"] and not form.get("hostname"):
+        form = {**form, "hostname": setup["hostname"]}
+    return render_template("endpoint.html", can_setup=True, setup_form=form,
                            acme_enabled=acme.enabled(),
                            default_endpoint_port=8443 if PUBLIC_HTTPS else 443,
-                           quick_hostname=quick_setup_hostname())
+                           quick_setup=setup)
 
 @app.route("/endpoint", methods=["GET", "POST"])
 @action("endpoint")
@@ -777,6 +785,15 @@ def setup_endpoint():
     username = form.get("username", "").strip()
     if not re.fullmatch(r"[^\s\x00-\x1f:]{1,64}", username):
         raise ValueError("Enter a username of up to 64 characters, with no spaces or colons.")
+    public = form.get("public_address", "").strip()
+    if public:
+        host, _, public_port = public.rpartition(":")
+        try:
+            public = f"{ip_address(host.strip('[]'))}:{int(public_port)}"
+        except ValueError:
+            raise ValueError("Invalid public address for client exports.") from None
+        if not 1 <= int(public_port) <= 65535:
+            raise ValueError("Invalid public address for client exports.")
     password = secrets.token_urlsafe(24)
     bind = f"[{address}]" if address.version == 6 else str(address)
     vpn = tomlkit.item({
@@ -816,6 +833,11 @@ def setup_endpoint():
     ]})
     changes[b.VPN] = tomlkit.dumps(vpn)
     b.apply_endpoint(changes, vpn)
+    if public:
+        config = settings()
+        if not config.get("address"):
+            config["address"] = public
+            b.write_json(SETTINGS, config)
     return saved("index", "TrustTunnel is running. Open the first client's actions to export a connection.")
 
 @app.get("/tls")

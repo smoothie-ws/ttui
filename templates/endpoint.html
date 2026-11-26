@@ -30,18 +30,19 @@
 {{ heading('TrustTunnel', 'Create the VPN node in one step, or use custom certificate settings.') }}
 <section class="section stack">
   <h2>Set up TrustTunnel</h2>
-  {% if quick_hostname %}
-  <p class="subtle">Recommended: the hostname you opened already points here. ttui creates a self-signed certificate, the first client <code>default</code>, and enables HTTP/3.</p>
+  {% if quick_setup %}
+  <p class="subtle">Recommended: create a working node for this server. ttui generates a self-signed certificate, the first client <code>default</code>, and enables HTTP/3.</p>
   <form class="row" method="post" action="{{ url_for('setup_endpoint') }}">
     {{ token() }}
-    <input type="hidden" name="hostname" value="{{ quick_hostname }}">
+    <input type="hidden" name="hostname" value="{{ quick_setup.hostname }}">
     <input type="hidden" name="bind" value="0.0.0.0">
     <input type="hidden" name="port" value="{{ default_endpoint_port }}">
     <input type="hidden" name="username" value="default">
     <input type="hidden" name="quic" value="on">
-    <button class="primary">Create node on {{ quick_hostname }}:{{ default_endpoint_port }}</button>
+    {% if quick_setup.address %}<input type="hidden" name="public_address" value="{{ quick_setup.address }}">{% endif %}
+    <button class="primary">Create node for {{ quick_setup.target }}</button>
   </form>
-  <p class="subtle">Open TCP {{ default_endpoint_port }} in the host firewall, and also UDP {{ default_endpoint_port }} for HTTP/3.</p>
+  <p class="subtle">Open TCP {{ default_endpoint_port }} in the host firewall, and also UDP {{ default_endpoint_port }} for HTTP/3.{% if quick_setup.address %} The certificate covers <code>{{ quick_setup.hostname }}</code>; clients connect to {{ quick_setup.target }}.{% endif %}</p>
   <h3>Custom setup</h3>
   {% endif %}
   <form class="stack" method="post" action="{{ url_for('setup_endpoint') }}">

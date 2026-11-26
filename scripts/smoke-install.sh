@@ -29,8 +29,10 @@ snapshot() {
         /var/lib/ttui/geo/geosite.dat /etc/trusttunnel/{vpn,hosts,credentials}.toml \
         /etc/systemd/system/ttui.service
 }
-install_panel --local
-grep -q '^Default sign-in URL: http://127.0.0.1:8080/ttui/$' "$work/install.log"
+install_panel
+grep -Eq '^Sign-in URL: http://[0-9a-fA-F.:]+:8080/ttui/$' "$work/install.log"
+grep -Fq 'ttui web panel sign-in' "$work/install.log"
+grep -Eq '^TTUI_BIND=0\.0\.0\.0$' /etc/default/ttui
 grep -q '^Administrator username: admin$' "$work/install.log"
 grep -Eq '^ttui /ttui \| admin \| [A-Za-z0-9_-]+$' "$work/install.log"
 grep -Fq 'Sign in and open TrustTunnel to create the VPN node' "$work/install.log"
@@ -98,6 +100,7 @@ assert "The service journal is unavailable" not in get("/logs")
 assert "Accepting connections on 127.0.0.1:8080." in submit("/diagnostics", get("/diagnostics"))
 server = get("/endpoint")
 assert "Set up TrustTunnel" in server
+assert "Create node for 127.0.0.1:443" in server
 page = submit("/setup", server, hostname="smoke.example", bind="127.0.0.1", port="17443", username="smoke")
 assert "TrustTunnel is running." in page, "Panel setup failed"
 cookie_header = "; ".join(f"{cookie.name}={cookie.value}" for cookie in cookies)
