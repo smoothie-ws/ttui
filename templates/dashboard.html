@@ -1,19 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
+{% block scripts %}<script defer src="{{ url_for('static', filename='monitoring.js') }}"></script>{% endblock %}
 {% block content %}
-{{ heading('Dashboard', 'Service status for this installation.', 'ttui ' ~ version) }}
-<div class="grid">
-  <section class="card stack">
-    <h2>TrustTunnel Endpoint</h2>
-    <p role="status">{{ {'active': 'Running', 'unconfigured': 'Not configured'}.get(endpoint, 'Stopped') }}</p>
-    <div><a class="button" href="{{ url_for('server') }}">{{ 'Set up TrustTunnel' if endpoint == 'unconfigured' else 'Server settings' }}</a></div>
-  </section>
-  <section class="card stack">
-    <h2>Xray</h2>
-    <p role="status">{{ 'Running' if router == 'active' else 'Stopped' }}</p>
-    <div><a class="button" href="{{ url_for('routing') }}">Routing settings</a></div>
-  </section>
-</div>
+{% macro state_badge(state) %}
+{% set labels = {'active': 'Running', 'inactive': 'Stopped', 'failed': 'Failed', 'unconfigured': 'Not configured',
+                 'activating': 'Starting', 'deactivating': 'Stopping'} %}
+<span class="status{% if state == 'active' %} online{% elif state in ('failed', 'inactive') %} danger{% endif %}">{{ labels.get(state, state|capitalize) }}</span>
+{% endmacro %}
+{{ heading('Dashboard', 'Service status and recent activity for this installation.', 'ttui ' ~ version) }}
+<section class="card stack">
+  <div class="section-title"><h2>Services</h2><a href="{{ url_for('diagnostics') }}">Run diagnostics</a></div>
+  <div class="grid">
+    {% for name, state, is_configured in services %}
+    <div class="service">
+      <strong>{{ name }}</strong>
+      {{ state_badge(state) }}
+      {% if name == 'TrustTunnel Endpoint' %}
+      <a class="subtle" href="{{ url_for('server') }}">{{ 'Set up TrustTunnel' if state == 'unconfigured' else 'Server settings' }}</a>
+      {% elif name == 'Xray routing' %}
+      <a class="subtle" href="{{ url_for('routing') }}">Routing settings</a>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
 <div class="grid">
   <section class="card stack">
     <h2>Host resources</h2>
@@ -23,6 +33,7 @@
       <dt>Free space for panel data</dt><dd>{{ '%.2f GiB'|format(metrics.disk / 1073741824) if metrics.disk is not none else 'Unavailable' }}</dd>
       <dt>Host uptime</dt><dd>{{ '%dd %dh %dm'|format(metrics.uptime // 86400, metrics.uptime // 3600 % 24, metrics.uptime // 60 % 60) if metrics.uptime is not none else 'Unavailable' }}</dd>
     </dl>
+    <div><a href="{{ url_for('monitoring') }}">Open monitoring history</a></div>
   </section>
   <section class="card stack">
     <h2>Connections</h2>
@@ -32,6 +43,56 @@
       <dt>Host network totals since boot</dt>
       <dd>{{ ('%.2f GiB received, %.2f GiB sent'|format(metrics.traffic[0] / 1073741824, metrics.traffic[1] / 1073741824)) if metrics.traffic is not none else 'Unavailable' }}</dd>
     </dl>
+    <div><a href="{{ url_for('index') }}">Manage clients</a></div>
+  </section>
+</div>
+<section class="card stack">
+  <div class="section-title"><h2>Traffic and load, last 24 hours</h2><a href="{{ url_for('monitoring', period='24h') }}">Details</a></div>
+  {% if samples %}
+  <div id="history-data" data-points="{{ samples|tojson|forceescape }}">
+    <div class="grid">
+      <div><h3>CPU and RAM (%)</h3><canvas data-chart="usage" role="img" aria-label="CPU and RAM usage history"></canvas></div>
+      <div><h3>Host traffic (KiB/s)</h3><canvas data-chart="traffic" role="img" aria-label="Host network traffic received and sent"></canvas></div>
+    </div>
+  </div>
+  {% else %}
+  <p class="notice">No samples yet. The metrics service records one sample per minute; history appears after the first interval.</p>
+  {% endif %}
+</section>
+<div class="grid">
+  <section class="card stack">
+    <div class="section-title"><h2>Certificates</h2><a href="{{ url_for('tls_hosts') }}">Manage TLS</a></div>
+    {% if certificates %}
+    <p>{{ certificates|length }} managed certificate{{ '' if certificates|length == 1 else 's' }}{% if expiring %}, <span class="danger">{{ expiring }} need{{ 's' if expiring == 1 else '' }} attention</span>{% endif %}.</p>
+    <ul class="event-list">
+      {% for item in certificates %}
+      <li>
+        <span>{{ item.hostname or 'Unnamed host' }}</span>
+        {% if item.status is none %}<span class="status danger">Unavailable</span>
+        {% elif item.status.days < 0 %}<span class="status danger">Expired</span>
+        {% elif item.status.days <= 30 %}<span class="status danger">Expires in {{ item.status.days }} day{{ '' if item.status.days == 1 else 's' }}</span>
+        {% else %}<span class="status online">Valid for {{ item.status.days }} days</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="subtle">TLS certificates appear here after TrustTunnel is configured.</p>
+    {% endif %}
+  </section>
+  <section class="card stack">
+    <div class="section-title"><h2>Recent activity</h2><a href="{{ url_for('logs', source='panel') }}">Panel log</a></div>
+    {% if events %}
+    <ul class="event-list">
+      {% for event in events %}
+      <li>
+        <span>{{ event.label }}</span>
+        <span class="subtle">{{ 'Rejected' if event.result == 'rejected' else 'Completed' }}{% if event.address %} from {{ event.address }}{% endif %} at <time datetime="{{ event.at }}">{{ event.at }}</time></span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="subtle">No administrative activity has been recorded yet.</p>
+    {% endif %}
   </section>
 </div>
 {% endblock %}

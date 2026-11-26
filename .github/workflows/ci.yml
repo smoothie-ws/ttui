@@ -34,6 +34,12 @@ jobs:
           node --check static/monitoring.js
           node --check static/logs.js
           git show --format= --check HEAD
+      - name: Check removed installer option
+        run: |
+          if bash install.sh --panel-only >/dev/null 2>&1; then
+            echo "--panel-only must fail with a migration hint"
+            exit 1
+          fi
   install:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

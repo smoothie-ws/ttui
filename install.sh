@@ -66,16 +66,24 @@ check_public_domain() {
     fi
 }
 
+check_panel_port() {
+    local port=$1
+    if [[ -n $(ss -H -ltn "sport = :$port") ]]; then
+        echo "TCP port $port is already in use. Choose another port with --port." >&2
+        return 1
+    fi
+}
+
 start_panel_https() {
-    local domain=$1
+    local domain=$1 port=$2
     cat >/etc/caddy/Caddyfile <<EOF
 $domain {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:$port
 }
 
 http:// {
     handle /.well-known/acme-challenge/* {
-        reverse_proxy 127.0.0.1:8080
+        reverse_proxy 127.0.0.1:$port
     }
     handle {
         respond 404
@@ -221,8 +229,8 @@ finish_update() {
 
 main() {
     local source_dir='' version=latest allow_downgrade=0 newer_only=0 updating=0 target current=unknown
-    local domain='' access='' adding_https=0
-    local -a packages=(ca-certificates curl openssl python3 python3-venv sudo unzip util-linux)
+    local domain='' access='' adding_https=0 panel_port=8080 port_set=0
+    local -a packages=(ca-certificates curl iproute2 openssl python3 python3-venv sudo unzip util-linux)
     local architecture xray_arch endpoint_sha client_sha xray_sha
     local config=/etc/trusttunnel state=/var/lib/ttui
     local -a forwarded=() active=()
@@ -246,11 +254,16 @@ main() {
             --source) source_dir=$(realpath "${2:?Missing source directory}"); shift ;;
             --version) version=${2:?Missing release version}; shift ;;
             --domain) domain=${2:?Missing panel domain}; forwarded+=(--domain "$domain"); shift ;;
-            --local|--panel-only) access=local; forwarded+=(--local) ;;
+            --port) panel_port=${2:?Missing panel port}; port_set=1; forwarded+=(--port "$panel_port"); shift ;;
+            --local) access=local; forwarded+=(--local) ;;
             --external-proxy) access=external; forwarded+=(--external-proxy) ;;
+            --panel-only)
+                echo "--panel-only was removed because every installation includes the TrustTunnel tools." >&2
+                echo "Use --local for SSH-only access, --domain for managed HTTPS, or --external-proxy for your own proxy." >&2
+                return 2 ;;
             --allow-downgrade) allow_downgrade=1; forwarded+=(--allow-downgrade) ;;
             --newer-only) newer_only=1; forwarded+=(--newer-only) ;;
-            *) echo "Usage: ttui [update] [--version vX.Y.Z | --source DIR] [--domain HOST | --local | --external-proxy] [--allow-downgrade]" >&2; return 2 ;;
+            *) echo "Usage: ttui [update] [--version vX.Y.Z | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT] [--allow-downgrade]" >&2; return 2 ;;
         esac
         shift
     done
@@ -288,6 +301,14 @@ main() {
     if (( newer_only && ! updating )); then
         echo "An existing ttui installation is required." >&2
         return 1
+    fi
+    if [[ ! $panel_port =~ ^[1-9][0-9]{0,4}$ ]] || (( 10#$panel_port < 1024 || 10#$panel_port > 65535 )); then
+        echo "Choose an internal panel port from 1024 to 65535." >&2
+        return 2
+    fi
+    if (( updating && port_set )); then
+        echo "Updates keep the existing panel port. Change TTUI_PORT in /etc/default/ttui and the proxy configuration instead." >&2
+        return 2
     fi
     if [[ -n $domain && -n $access ]]; then
         echo "Choose one panel access mode." >&2; return 2
@@ -340,6 +361,9 @@ main() {
     fi
     if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
         echo "Python 3.9 or newer is required." >&2
+        return 1
+    fi
+    if (( ! updating )) && ! check_panel_port "$panel_port"; then
         return 1
     fi
     local work
@@ -414,16 +438,20 @@ main() {
     systemctl daemon-reload
 
     if (( ! updating )); then
+        touch /etc/default/ttui
+        awk -v port="$panel_port" '!/^TTUI_PORT=/{print} END{print "TTUI_PORT=" port}' \
+            /etc/default/ttui >"$work/ttui.default"
+        install -m 0644 "$work/ttui.default" /etc/default/ttui
         credentials=$(runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init)
         echo
         echo "ttui web panel sign-in"
         if [[ -n $domain ]]; then
             echo "Sign-in URL: https://$domain/ttui/"
         elif [[ $access == external ]]; then
-            echo "Point your HTTPS reverse proxy at http://127.0.0.1:8080 and open /ttui/ on your HTTPS origin."
+            echo "Point your HTTPS reverse proxy at http://127.0.0.1:$panel_port and open /ttui/ on your HTTPS origin."
         else
-            echo "Default sign-in URL: http://127.0.0.1:8080/ttui/"
-            echo "Remote access with the default bind: ssh -L 8080:127.0.0.1:8080 USER@SERVER"
+            echo "Default sign-in URL: http://127.0.0.1:$panel_port/ttui/"
+            echo "Remote access with the default bind: ssh -L $panel_port:127.0.0.1:$panel_port USER@SERVER"
         fi
         runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --panel-info
         if [[ -n $credentials ]]; then
@@ -439,7 +467,7 @@ main() {
         wait_service ttui.service
         ln -sfn "$panel/install.sh" "$launcher"
         echo "ttui web panel is running."
-        if [[ -n $domain ]]; then start_panel_https "$domain"; fi
+        if [[ -n $domain ]]; then start_panel_https "$domain" "$panel_port"; fi
         if [[ -f "$config/vpn.toml" && -f "$config/hosts.toml" ]]; then
             if ! systemctl restart trusttunnel.service || ! wait_service trusttunnel.service; then
                 echo "TrustTunnel failed to start. The ttui panel is still running. Check journalctl -u trusttunnel.service." >&2

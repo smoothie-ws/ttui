@@ -30,9 +30,10 @@
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.55; }
 a { color: var(--accent); }
-h1, h2, p { margin: 0; }
+h1, h2, h3, p { margin: 0; }
 h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); letter-spacing: -.035em; line-height: 1.15; overflow-wrap: anywhere; }
 h2 { font-size: 1.075rem; font-weight: 670; }
+h3 { font-size: .95rem; font-weight: 650; }
 .subtle { color: var(--muted); font-size: .92rem; }
 .top { background: var(--surface); border-bottom: 1px solid var(--line); }
 .top-inner { width: min(100% - 32px, 1056px); margin: auto; min-height: 62px; display: flex; gap: 26px; align-items: center; }
@@ -46,10 +47,16 @@ main { width: min(100% - 32px, 1056px); margin: 44px auto 64px; display: grid; g
 .page-title { margin-bottom: 4px; }
 .page-title p { margin-top: 6px; }
 .status, .count, .files code { display: inline-flex; padding: .2em .65em; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: var(--surface); font-size: .85rem; font-weight: 600; }
-.status.online { color: var(--green); }
+.status.online { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, var(--line)); }
+.status.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
+.service { display: grid; gap: 6px; align-content: start; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.service .status { justify-self: start; }
+.event-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; align-content: start; }
+.event-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 6px 12px; border-top: 1px solid var(--line); padding-top: 8px; overflow-wrap: anywhere; }
+.event-list li:first-child { border-top: 0; padding-top: 0; }
 .card { padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); min-width: 0; }
 .card > h2 + form, .card > h2 + p, .card > h2 + details { margin-top: 14px; }
-.stack { display: grid; gap: 14px; min-width: 0; }
+.stack { display: grid; gap: 14px; min-width: 0; align-content: start; }
 .row { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
 .row > label { flex: 1 1 12rem; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px; }
@@ -88,6 +95,11 @@ summary span.subtle { margin-left: .35rem; font-weight: 400; }
 .drag-handle { cursor: grab; }
 #history-data canvas { display: block; width: 100%; height: 190px; }
 .periods { flex: none; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); padding-bottom: 10px; position: sticky; top: 0; background: var(--bg); z-index: 2; }
+.tabs button { border-color: transparent; background: transparent; color: var(--muted); }
+.tabs button[aria-selected=true] { background: var(--surface); border-color: var(--line); color: var(--accent); }
+.tab-actions { position: sticky; bottom: 0; z-index: 2; padding: 10px 0; border-top: 1px solid var(--line); background: var(--bg); }
+@media (max-width: 650px) { .tab-actions { position: static; } }
 .journal-entry { border-top: 1px solid var(--line); padding-top: 10px; }
 .journal-entry pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #routing-editor[inert] { opacity: .5; }
@@ -100,14 +112,14 @@ summary span.subtle { margin-left: .35rem; font-weight: 400; }
   .card { padding: 16px; }
   .top-inner { gap: 4px 10px; flex-wrap: wrap; padding: 10px 0 5px; }
   .top-inner > form { margin-left: auto; }
-  nav { order: 1; flex: 1 0 100%; gap: 0; }
-  nav a { padding: .42rem .42rem; font-size: .83rem; }
+  .top-inner nav { order: 1; flex: 1 0 100%; gap: 0; }
+  .top-inner nav a { padding: .42rem .42rem; font-size: .83rem; }
 }
 @media (min-width: 900px) {
   .panel-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); min-height: 100vh; }
   .panel-layout .top { position: sticky; top: 0; align-self: start; height: 100vh; border-right: 1px solid var(--line); border-bottom: 0; }
   .panel-layout .top-inner { display: flex; flex-direction: column; align-items: stretch; gap: 24px; height: 100%; padding: 24px 14px 16px; }
-  .panel-layout nav { display: grid; align-content: start; gap: 4px; }
+  .panel-layout .top nav { display: grid; align-content: start; gap: 4px; }
   .panel-layout nav a { padding: .55rem .75rem; }
   .panel-layout .top-inner > form { margin-top: auto; }
 }

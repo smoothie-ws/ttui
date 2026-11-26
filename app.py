@@ -31,6 +31,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import backend as b
 import acme
+import activity
 import auth
 import backups as snapshots
 from routing import compile_routing
@@ -137,6 +138,9 @@ def headers(response):
     if event:
         result = "rejected" if response.status_code >= 400 or request.environ.get("ttui.action_failed") else "completed"
         app.logger.info("Audit: %s %s from %r", event, result, request.remote_addr)
+        # A preview or validation only reads the proposed configuration.
+        if request.form.get("operation") not in ("preview", "validate"):
+            activity.record(event, result, request.remote_addr)
     return response
 
 
@@ -221,6 +225,7 @@ def login():
         address = request.remote_addr or "unknown"
         database = b.STATE / "sign-in.sqlite3"
         if delay := auth.reserve_attempt(database, address):
+            activity.record("sign_in", "rejected", address)
             return render_template("login.html", error="Too many attempts. Try again in a minute."), 429, {
                 "Retry-After": str(delay),
             }
@@ -233,9 +238,11 @@ def login():
         secret = config.get("totp_secret")
         if not password_ok or not username_ok or (secret and not auth.use_totp(database, secret, request.form.get("code", ""))):
             app.logger.info("Audit: sign-in rejected from %r", address)
+            activity.record("sign_in", "rejected", address)
             return render_template("login.html", error="Incorrect credentials or authenticator code."), 401
         auth.clear_attempts(database, address)
         app.logger.info("Audit: sign-in completed from %r", address)
+        activity.record("sign_in", "completed", address)
         session.clear()
         session["auth"] = session_id(config)
         session.permanent = True
@@ -334,24 +341,49 @@ def check_revision(raw):
         raise ValueError("These settings changed after you opened this page. Review the latest version and try again.")
 
 
+def certificate_overview(hosts):
+    """Summarise managed TLS files without failing the dashboard on one bad file."""
+    overview = []
+    seen = set()
+    for records in hosts.values():
+        for host in records:
+            path = host.get("cert_chain_path")
+            if not isinstance(path, str) or path in seen or len(overview) >= 10:
+                continue
+            seen.add(path)
+            overview.append({"hostname": str(host.get("hostname", "")), "status": tls.certificate_status(path)})
+    return overview
+
+
 @app.get("/")
 def dashboard():
     vpn = {}
+    hosts = {}
     with b.LOCK:
         configured = b.VPN.is_file() and b.HOSTS.is_file()
         try:
             if configured:
                 vpn = read_vpn()
+                hosts = host_groups(b.read(b.HOSTS, ""))
             accounts = {entry["username"] for entry in b.configured_clients(vpn)}
         except OPERATION_ERRORS:
             accounts = None
     live = client_statistics(vpn) if accounts else None
     connected = sum(name in accounts and item["sessions"] > 0 for name, item in live.items()) if live is not None else None
+    certificates = certificate_overview(hosts)
+    services = [("Panel", "active", True),
+                ("TrustTunnel Endpoint", b.service_state(b.ENDPOINT_UNIT) if configured else "unconfigured", configured),
+                ("Xray routing", b.service_state(b.ROUTER_UNIT), None)]
+    if acme.enabled():
+        services.append(("Caddy", b.service_state("caddy.service"), True))
     return render_template("dashboard.html", version=VERSION,
                            endpoint=b.service_state(b.ENDPOINT_UNIT) if configured else "unconfigured",
                            router=b.service_state(b.ROUTER_UNIT), clients=len(accounts) if accounts is not None else None,
                            connected=connected,
-                           metrics=host_metrics(b.STATE))
+                           metrics=host_metrics(b.STATE), services=services,
+                           certificates=certificates,
+                           expiring=sum(1 for item in certificates if item["status"] is None or item["status"]["days"] <= 30),
+                           events=activity.recent(8), samples=history(b.STATE, "24h"))
 
 
 @app.get("/clients")

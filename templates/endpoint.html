@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Endpoint{% endblock %}
+{% block title %}TrustTunnel Endpoint{% endblock %}
 {% block content %}
 {{ heading('TrustTunnel Endpoint', 'Configure listeners, connection handling, and endpoint services.') }}
 {% macro fields(items, prefix='') %}
@@ -27,79 +27,109 @@
     {% endfor %}
   </div>
 {% endmacro %}
-<form class="stack" method="post">
+<form class="stack" method="post" data-endpoint-form>
   {{ token() }}
   <input type="hidden" name="revision" value="{{ revision }}">
   <input type="hidden" name="candidate" value="{{ candidate }}">
-  <section class="card stack">
-    <h2>Listener</h2>
-    <div class="grid">
-      <label>Listen IP address <input name="bind" value="{{ values.bind }}" required></label>
-      <label>Listen port <input type="number" name="port" min="1" max="65535" value="{{ values.port }}" required></label>
-    </div>
-    {% for key, label in protocols.items() %}
-    <div class="stack">
-      <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> Enable {{ label }}</label>
-      <details><summary>{{ label }} settings</summary><div class="details-body">{{ fields(form_schema.PROTOCOL_FIELDS[key], key ~ '.') }}</div></details>
-    </div>
+  <nav class="tabs" role="tablist" aria-label="Endpoint sections" data-tabs data-open-tab="{{ 'advanced' if preview is not none else '' }}">
+    <button type="button" role="tab" data-tab="general" aria-selected="true">General</button>
+    <button type="button" role="tab" data-tab="protocols" aria-selected="false">Protocols</button>
+    <button type="button" role="tab" data-tab="network" aria-selected="false">Network</button>
+    <button type="button" role="tab" data-tab="advanced" aria-selected="false">Services &amp; advanced</button>
+  </nav>
+  <div class="stack" data-tab-panel="general">
+    <section class="card stack">
+      <h2>Listener</h2>
+      <p class="subtle">This is the address VPN clients connect to. Open the TCP port below in the firewall. HTTP/3 also needs the same UDP port.</p>
+      <div class="grid">
+        <label>Listen IP address <input name="bind" value="{{ values.bind }}" required><small class="subtle">Use 0.0.0.0 for every IPv4 interface, :: for IPv6, or a specific address.</small></label>
+        <label>Listen port <input type="number" name="port" min="1" max="65535" value="{{ values.port }}" required><small class="subtle">Ports 80 and 443 are reserved while the panel uses managed HTTPS.</small></label>
+      </div>
+    </section>
+    {% for title, fields in groups.items() if title == 'General' %}
+    <section class="card stack">
+      <h2>{{ title }}</h2>
+      <p class="subtle">These switches control destinations the endpoint may reach and the optional health and speed test paths on TLS hosts.</p>
+      <div class="grid">
+      {% for key, label, default in fields %}
+        {% if default is boolean %}
+        <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> {{ label }}</label>
+        {% else %}
+        <label>{{ label }} <input type="number" name="{{ key }}" min="1" max="4294967295" value="{{ values[key] }}" required></label>
+        {% endif %}
+      {% endfor %}
+      </div>
+    </section>
     {% endfor %}
-  </section>
-  {% for title, fields in groups.items() %}
-  <section class="card stack">
-    <h2>{{ title }}</h2>
-    <div class="grid">
-    {% for key, label, default in fields %}
-      {% if default is boolean %}
-      <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> {{ label }}</label>
-      {% else %}
-      <label>{{ label }} <input type="number" name="{{ key }}" min="1" max="4294967295" value="{{ values[key] }}" required></label>
-      {% endif %}
+  </div>
+  <div class="stack" data-tab-panel="protocols">
+    <section class="card stack">
+      <h2>Transport protocols</h2>
+      <p class="subtle">Enable at least one protocol. HTTP/1.1 and HTTP/2 use TCP; HTTP/3 uses QUIC over UDP. Metrics require HTTP/1.1 in TrustTunnel 1.3.1.</p>
+      {% for key, label in protocols.items() %}
+      <div class="stack">
+        <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> Enable {{ label }}</label>
+        <details><summary>{{ label }} settings</summary><div class="details-body">{{ fields(form_schema.PROTOCOL_FIELDS[key], key ~ '.') }}</div></details>
+      </div>
+      {% endfor %}
+    </section>
+  </div>
+  <div class="stack" data-tab-panel="network">
+    {% for title, fields in groups.items() if title == 'Timeouts (seconds)' %}
+    <section class="card stack">
+      <h2>{{ title }}</h2>
+      <p class="subtle">Idle limits close dormant connections. Shorter values free resources; longer values tolerate slow networks.</p>
+      <div class="grid">
+      {% for key, label, default in fields %}
+        <label>{{ label }} <input type="number" name="{{ key }}" min="1" max="4294967295" value="{{ values[key] }}" required></label>
+      {% endfor %}
+      </div>
+    </section>
     {% endfor %}
-    </div>
-  </section>
-  {% endfor %}
-  <details class="card" {% if preview is not none %}open{% endif %}>
-    <summary>Connection limits, authentication responses, and files</summary>
-    <div class="details-body stack">
-      <p class="subtle">Leave connection limits blank for unlimited connections. Changing the CONNECT status from 407 can prevent Chrome from authenticating.</p>
-      <p class="subtle">File paths are relative to the TrustTunnel configuration directory or point to files inside it.</p>
+    <section class="card stack">
+      <h2>Connection limits, authentication, and files</h2>
+      <p class="subtle">Leave connection limits blank for unlimited connections. Changing the CONNECT status from 407 can prevent Chrome from authenticating. File paths are relative to the TrustTunnel configuration directory or point to files inside it.</p>
       {{ fields(form_schema.CORE) }}
-    </div>
-  </details>
-  <details class="card">
-    <summary>Native outbound</summary>
-    <div class="details-body stack">
-      {% if routed %}
-      <p>The endpoint currently forwards through <a href="{{ url_for('routing') }}">Xray routing</a>.</p>
-      {% else %}
-      <label>Forwarding mode <select name="forward">
-        <option value="direct">Direct</option><option value="socks5" {% if values.forward == 'socks5' %} selected{% endif %}>SOCKS5</option>
-      </select></label>
-      {{ fields(form_schema.FORWARD_FIELDS, 'socks5.') }}
-      {% endif %}
-    </div>
-  </details>
-  {% for key, (label, items) in form_schema.OPTIONAL.items() %}
-  <details class="card" {% if values[key] != 'off' %}open{% endif %}>
-    <summary>{{ label }}</summary>
-    <div class="details-body stack">
-      <label>{{ label }} mode <select name="{{ key }}">
-        <option value="off">Not configured</option>
-        {% if key == 'subscription' %}<option value="disabled" {% if values[key] == 'disabled' %} selected{% endif %}>Configured and disabled</option>{% endif %}
-        <option value="on" {% if values[key] == 'on' %} selected{% endif %}>Enabled</option>
-      </select></label>
-      {% if key == 'metrics' %}<p class="subtle">TrustTunnel 1.3.1 requires HTTP/1.1 for metrics. The metrics listener has no ttui sign-in. Keep it on loopback unless the metrics network is protected.</p>{% endif %}
-      {{ fields(items, key ~ '.') }}
-    </div>
-  </details>
-  {% endfor %}
-  {% if preview is not none %}
-  <section class="card stack">
-    <h2>Proposed changes</h2>
-    {% if preview %}<textarea class="code" rows="10" readonly aria-label="Configuration diff">{{ preview }}</textarea>{% else %}<p>No changes.</p>{% endif %}
-  </section>
-  {% endif %}
-  <div class="actions">
+    </section>
+    <details class="card">
+      <summary>Native outbound</summary>
+      <div class="details-body stack">
+        {% if routed %}
+        <p>The endpoint currently forwards through <a href="{{ url_for('routing') }}">Xray routing</a>.</p>
+        {% else %}
+        <p class="subtle">Direct is the normal choice. SOCKS5 forwards all endpoint traffic through another proxy.</p>
+        <label>Forwarding mode <select name="forward">
+          <option value="direct">Direct</option><option value="socks5" {% if values.forward == 'socks5' %} selected{% endif %}>SOCKS5</option>
+        </select></label>
+        {{ fields(form_schema.FORWARD_FIELDS, 'socks5.') }}
+        {% endif %}
+      </div>
+    </details>
+  </div>
+  <div class="stack" data-tab-panel="advanced">
+    {% for key, (label, items) in form_schema.OPTIONAL.items() %}
+    <details class="card" {% if values[key] != 'off' %}open{% endif %}>
+      <summary>{{ label }}</summary>
+      <div class="details-body stack">
+        <label>{{ label }} mode <select name="{{ key }}">
+          <option value="off">Not configured</option>
+          {% if key == 'subscription' %}<option value="disabled" {% if values[key] == 'disabled' %} selected{% endif %}>Configured and disabled</option>{% endif %}
+          <option value="on" {% if values[key] == 'on' %} selected{% endif %}>Enabled</option>
+        </select></label>
+        {% if key == 'metrics' %}<p class="subtle">TrustTunnel 1.3.1 requires HTTP/1.1 for metrics. The metrics listener has no ttui sign-in. Keep it on loopback unless the metrics network is protected.</p>{% endif %}
+        {% if key == 'subscription' %}<p class="subtle">The subscription hostname must match a VPN TLS host and its path must not overlap health, speed test, or reverse proxy paths.</p>{% endif %}
+        {{ fields(items, key ~ '.') }}
+      </div>
+    </details>
+    {% endfor %}
+    {% if preview is not none %}
+    <section class="card stack">
+      <h2>Proposed changes</h2>
+      {% if preview %}<textarea class="code" rows="12" readonly aria-label="Configuration diff">{{ preview }}</textarea>{% else %}<p>No changes.</p>{% endif %}
+    </section>
+    {% endif %}
+  </div>
+  <div class="actions tab-actions">
     <button name="operation" value="preview">Preview changes</button>
     {% if preview %}<button class="primary" name="operation" value="apply">Apply and restart</button>{% endif %}
     <a class="button" href="{{ url_for('server') }}">Server and advanced settings</a>

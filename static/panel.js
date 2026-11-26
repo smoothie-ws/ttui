@@ -44,6 +44,35 @@ if (document.querySelector("[data-update-running]")) {
   setTimeout(waitForUpdate, 4000);
 }
 
+const tabSet = document.querySelector("[data-tabs]");
+if (tabSet) {
+  const buttons = [...tabSet.querySelectorAll("[data-tab]")];
+  const panels = [...document.querySelectorAll("[data-tab-panel]")];
+  const names = new Set(panels.map((panel) => panel.dataset.tabPanel));
+  const activate = (name, remember) => {
+    if (!names.has(name)) return;
+    for (const button of buttons) {
+      const selected = button.dataset.tab === name;
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+      button.tabIndex = selected ? 0 : -1;
+    }
+    for (const panel of panels) panel.hidden = panel.dataset.tabPanel !== name;
+    if (remember) history.replaceState(null, "", "#" + name);
+  };
+  buttons.forEach((button, index) => {
+    button.addEventListener("click", () => activate(button.dataset.tab, true));
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const next = buttons[(index + (event.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length];
+      activate(next.dataset.tab, true);
+      next.focus();
+    });
+  });
+  const requested = tabSet.dataset.openTab || location.hash.slice(1);
+  activate(names.has(requested) ? requested : buttons[0]?.dataset.tab, false);
+}
+
 const filterForm = document.querySelector("[data-filter-form]");
 if (filterForm) {
   const rows = filterForm.querySelector("[data-filter-rows]");

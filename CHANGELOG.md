@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.3.0
+
+- Turn the dashboard into a server overview with service states, 24-hour load and traffic history, certificate expiry warnings, client totals, and recent administrative activity.
+- Keep a private activity trail for sign-ins and administrative changes and show its newest events on the dashboard.
+- Group endpoint settings into General, Protocols, Network, and Services & advanced tabs with field guidance.
+- Remove the ambiguous `--panel-only` installer option and add an advanced `--port` option with validation, port-conflict checks, and managed Caddy support.
+- Expand the published capability map with endpoint, protocol, routing, security, and restart details.
+- Fix sidebar navigation styles leaking into in-page tabs on desktop and mobile.
+
 ## 0.2.0
 
 - Install the web panel with managed HTTPS and initial administrator credentials; configure TrustTunnel in the browser without its terminal wizard.

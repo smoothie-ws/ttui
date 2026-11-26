@@ -82,6 +82,49 @@ class PanelTest(unittest.TestCase):
             response = panel.app.test_client().get("/ttui/login", base_url="https://panel.example")
             self.assertIn("; Secure;", response.headers["Set-Cookie"])
 
+    def test_dashboard_shows_unconfigured_endpoint_and_recent_activity(self):
+        config = {"path": "/ttui", "secret": "test-secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("correct-password", method="pbkdf2:sha256:1000")}
+        with patch.object(panel, "settings", return_value=config), patch.dict(
+            panel.app.config, SECRET_KEY=config["secret"]
+        ), patch.object(panel.b, "VPN", self.state / "vpn.toml"), patch.object(
+            panel.b, "HOSTS", self.state / "hosts.toml"
+        ), patch.object(panel, "history", return_value=[]):
+            client = panel.app.test_client()
+            page = client.get("/ttui/login")
+            token = re.search(rb'name="csrf" value="([^"]+)"', page.data)[1].decode()
+            self.assertEqual(client.post("/ttui/login", data={
+                "csrf": token, "username": "admin", "password": "correct-password",
+            }).status_code, 302)
+            page = client.get("/ttui/")
+            self.assertEqual(page.status_code, 200)
+            self.assertIn(b"Not configured", page.data)
+            self.assertIn(b"Administrator sign-in", page.data)
+            self.assertIn(b"Completed", page.data)
+
+    def test_dashboard_warns_about_certificates_expiring_soon(self):
+        vpn = self.state / "vpn.toml"
+        hosts = self.state / "hosts.toml"
+        vpn.write_text("", encoding="utf-8")
+        hosts.write_text('[[main_hosts]]\nhostname = "vpn.example"\n'
+                         'cert_chain_path = "cert.pem"\nprivate_key_path = "key.pem"\n', encoding="utf-8")
+        config = {"path": "/ttui", "secret": "test-secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("correct-password", method="pbkdf2:sha256:1000")}
+        status = {"expires": "2026-12-01T00:00+00:00", "days": 5, "fingerprint": "AA:BB"}
+        with patch.object(panel, "settings", return_value=config), patch.dict(
+            panel.app.config, SECRET_KEY=config["secret"]
+        ), patch.object(panel.b, "VPN", vpn), patch.object(panel.b, "HOSTS", hosts), patch.object(
+            panel, "history", return_value=[]
+        ), patch.object(panel.tls, "certificate_status", return_value=status):
+            client = panel.app.test_client()
+            page = client.get("/ttui/login")
+            token = re.search(rb'name="csrf" value="([^"]+)"', page.data)[1].decode()
+            client.post("/ttui/login", data={"csrf": token, "username": "admin", "password": "correct-password"})
+            page = client.get("/ttui/")
+            self.assertIn(b"vpn.example", page.data)
+            self.assertIn(b"Expires in 5 days", page.data)
+            self.assertIn(b"1 needs attention", page.data)
+
     def test_routing_preserves_priority_and_default(self):
         rules = [{"domain": [r"regexp:^test\.example$"], "outboundTag": "direct"},
                  {"ip": ["geoip:private"], "outboundTag": "block"}]

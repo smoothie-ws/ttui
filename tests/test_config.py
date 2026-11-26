@@ -340,6 +340,9 @@ class ConfigTest(unittest.TestCase):
             page = client.get("/ttui/endpoint")
             fields["csrf"] = csrf.search(page.data)[1].decode()
             self.assertIn(b'name="http2.max_frame_size"', page.data)
+            self.assertIn(b"data-tabs", page.data)
+            self.assertIn(b'data-tab-panel="network"', page.data)
+            self.assertIn(b"Services &amp; advanced", page.data)
             fields["revision"] = re.search(rb'name="revision" value="([^"]+)"', page.data)[1].decode()
             invalid = client.post("/ttui/endpoint", data={**fields, "operation": "preview", "subscription.path": "/ping/vpn"},
                                   follow_redirects=True)

@@ -1,6 +1,6 @@
 # ttui
 
-A minimal web panel for a single TrustTunnel Endpoint. Manage clients, export `tt://` links, and configure TLS hosts and server settings. Xray selects outbounds by domain or IP, and the official TrustTunnel Client connects to upstream endpoints in a cascade.
+A web administration panel for a single TrustTunnel Endpoint. Manage clients, export `tt://` links, configure TLS hosts and server settings from the browser, and watch service health from the dashboard. Xray selects outbounds by domain or IP, and the official TrustTunnel Client connects to upstream endpoints in a cascade.
 
 ## Installation
 
@@ -21,6 +21,8 @@ sudo bash install.sh --source "$PWD" --domain panel.example.com
 ```
 
 Run the command from a checkout that includes browser-first setup. Point the panel domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy. The installer starts the web panel and prints its HTTPS URL and sign-in details. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. On a fresh server, the VPN endpoint stays unconfigured until you complete setup in the browser.
+
+For an advanced deployment, pass `--port 8088` to change the internal panel port, `--external-proxy` to use an existing HTTPS proxy, or `--local` for SSH-only access. The removed `--panel-only` option now fails with a migration hint: every installation includes the TrustTunnel tools, and access mode is selected separately. The installer refuses an internal port below 1024 or one already in use, and it writes the chosen port to `/etc/default/ttui`.
 
 Sign in and go to **Server → Set up TrustTunnel**. Enter the VPN hostname, listen IP and port, and the first client username. Point the VPN hostname at the server and open the endpoint port for TCP and, for HTTP/3, UDP. Use an existing TLS certificate or let ttui generate a self-signed one. TrustTunnel includes a self-signed certificate in client exports so clients can verify the endpoint. After setup, go to **Clients** to export the first connection.
 
@@ -82,7 +84,15 @@ git push origin v0.2.0
 
 The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, bootstrap script, and compatibility metadata. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/trusttunnel-ui/ttui-panel/releases).
 
+## Dashboard
+
+The dashboard shows the state of the panel, TrustTunnel Endpoint, Xray routing, and Caddy when it is managed by ttui. It also shows host CPU, memory, disk space, uptime, client totals, real host traffic, the last 24 hours of load and traffic from the metrics service, certificate expiry warnings, and recent administrative activity. Connected client accounts appear only when the Endpoint exposes per-client metrics; the panel does not invent session or per-client traffic values.
+
+Recent activity is stored privately in `/var/lib/ttui/activity.jsonl` and is also written to the panel journal. It records sign-ins, rejected attempts, configuration changes, backup and update operations, and other administrative actions without storing passwords or form contents.
+
 ## Server and clients
+
+The endpoint page is split into General, Protocols, Network, and Services & advanced tabs. Each change is validated, previewed as a TOML diff, backed up, written atomically, and applied with an endpoint restart only after the preview is accepted.
 
 In each client card, set HTTP/1.1 and HTTP/2 or HTTP/3 connection limits. Blank limits inherit the Endpoint defaults. To display native session counts, traffic counters, and observed IPs in client cards, enable HTTP/1.1 and per-client metrics on a loopback address in **Endpoint settings**. Traffic counters reset when the Endpoint restarts.
 
