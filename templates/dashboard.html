@@ -4,25 +4,43 @@
 {% block content %}
 {% macro state_badge(state) %}
 {% set labels = {'active': 'Running', 'inactive': 'Stopped', 'failed': 'Failed', 'unconfigured': 'Not configured',
-                 'activating': 'Starting', 'deactivating': 'Stopping'} %}
+                 'activating': 'Starting', 'deactivating': 'Stopping', 'disabled': 'Disabled'} %}
 <span class="status{% if state == 'active' %} online{% elif state in ('failed', 'inactive') %} danger{% endif %}">{{ labels.get(state, state|capitalize) }}</span>
 {% endmacro %}
 {{ heading('Dashboard', 'Service status and recent activity for this installation.', 'ttui ' ~ version) }}
 <section class="card stack">
   <div class="section-title"><h2>Services</h2><a href="{{ url_for('diagnostics') }}">Run diagnostics</a></div>
   <div class="grid">
-    {% for name, state, is_configured in services %}
+    {% for service in services %}
     <div class="service">
-      <strong>{{ name }}</strong>
-      {{ state_badge(state) }}
-      {% if name == 'TrustTunnel Endpoint' %}
-      <a class="subtle" href="{{ url_for('server') }}">{{ 'Set up TrustTunnel' if state == 'unconfigured' else 'Server settings' }}</a>
-      {% elif name == 'Xray routing' %}
-      <a class="subtle" href="{{ url_for('routing') }}">Routing settings</a>
-      {% endif %}
+      <strong>{{ service.name }}</strong>
+      {{ state_badge(service.state) }}
+      <div class="actions">
+        {% if service.href %}<a class="subtle" href="{{ service.href }}">{{ 'Set up TrustTunnel' if service.state == 'unconfigured' else 'Settings' }}</a>{% endif %}
+        {% if service.unit %}
+        <form method="post" action="{{ url_for('restart_service') }}" data-confirm="Restart {{ service.name }}? Active connections may reconnect.">
+          {{ token() }}<input type="hidden" name="unit" value="{{ service.unit }}">
+          <button class="quiet">Restart</button>
+        </form>
+        {% endif %}
+      </div>
     </div>
     {% endfor %}
   </div>
+</section>
+<section class="card stack">
+  <div class="section-title"><h2>Node readiness</h2>
+    <span class="status{% if ready %} online{% endif %}">{{ 'Ready' if ready else 'Needs attention' }}</span>
+  </div>
+  <ul class="checklist">
+    {% for check in checks %}
+    <li class="{% if check.ok %}ok{% else %}todo{% endif %}">
+      <span aria-hidden="true">{{ '✓' if check.ok else '○' }}</span>
+      <a href="{{ check.href }}">{{ check.label }}</a>
+      {% if not check.required %}<span class="subtle">optional</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
 </section>
 <div class="grid">
   <section class="card stack">

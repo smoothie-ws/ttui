@@ -95,6 +95,20 @@ def service_state(unit):
         return "inactive"
 
 
+def service_states(units):
+    """Query several units in one systemctl call, falling back to separate calls."""
+    units = list(dict.fromkeys(units))
+    try:
+        result = subprocess.run([SYSTEMCTL, "is-active", *units], text=True, encoding="utf-8",
+                                errors="replace", capture_output=True, timeout=3, check=False)
+        states = result.stdout.splitlines()
+        if len(states) == len(units):
+            return dict(zip(units, (state.strip() for state in states)))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {unit: service_state(unit) for unit in units}
+
+
 def active_endpoint():
     args = [SYSTEMCTL, "show", "-p", "MainPID", "-p", "ActiveState", ENDPOINT_UNIT]
     initial = set(command(args, timeout=3).splitlines())

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.4.0
+
+- Merge the separate Server and Endpoint pages into one TrustTunnel page with setup, tabs, advanced TOML, connection filters, and startup options in one place.
+- Add a one-click node setup on the panel hostname, node-readiness checklist, guarded endpoint/Xray restart buttons, and a prefilled client export address.
+- Group sidebar navigation, improve card and table layout, and open advanced sections directly from their links.
+- Cache panel settings and certificate inspection by file version, batch service-state queries, cache static assets, enable Caddy compression, increase Waitress concurrency, and shorten the metrics probe timeout.
+- Update installation guidance, capability map, and documentation for the simplified TrustTunnel workflow.
+
 ## 0.3.0
 
 - Turn the dashboard into a server overview with service states, 24-hour load and traffic history, certificate expiry warnings, client totals, and recent administrative activity.

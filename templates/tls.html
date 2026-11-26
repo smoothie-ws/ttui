@@ -22,7 +22,7 @@
 {% block content %}
 {{ heading('TLS & Certificates', 'Manage the certificates used by TrustTunnel Endpoint.') }}
 {% if not configured %}
-<p class="notice">Set up TrustTunnel under <a href="{{ url_for('server') }}">Server</a> before adding more TLS hosts.</p>
+<p class="notice">Set up TrustTunnel under <a href="{{ url_for('endpoint') }}">TrustTunnel</a> before adding more TLS hosts.</p>
 {% else %}
 <section class="card stack">
   <h2>TLS hosts</h2>

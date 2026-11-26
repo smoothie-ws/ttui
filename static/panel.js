@@ -1,5 +1,12 @@
 "use strict";
 
+document.addEventListener("click", (event) => {
+  const link = event.target.closest('a[href^="#"]');
+  if (!link) return;
+  const target = document.querySelector(link.getAttribute("href"));
+  if (target instanceof HTMLDetailsElement) target.open = true;
+});
+
 document.addEventListener("submit", (event) => {
   const message = event.submitter?.dataset.confirmButton || event.target.dataset.confirm;
   if (message && !window.confirm(message)) event.preventDefault();

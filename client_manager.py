@@ -28,7 +28,7 @@ def client_statistics(vpn):
             return None
     except (AttributeError, TypeError, ValueError):
         return None
-    connection = HTTPConnection(str(address), int(port), timeout=0.75)
+    connection = HTTPConnection(str(address), int(port), timeout=0.4)
     try:
         connection.request("GET", "/clients", headers={"Connection": "close"})
         with connection.getresponse() as response:

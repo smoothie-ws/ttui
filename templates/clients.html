@@ -3,7 +3,7 @@
 {% block content %}
 {{ heading('Clients', 'Manage TrustTunnel access and connection imports.', 'TrustTunnel', endpoint) }}
 {% if not initialized %}
-<p class="notice">Open <a href="{{ url_for('server') }}">Server</a> to set up TrustTunnel and create the first VPN client.</p>
+<p class="notice">Open <a href="{{ url_for('endpoint') }}">TrustTunnel</a> to set up the endpoint and create the first VPN client.</p>
 {% endif %}
 <section class="card">
   <h2>New client</h2>

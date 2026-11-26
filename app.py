@@ -17,6 +17,7 @@ from http.client import HTTPConnection, HTTPException
 from ipaddress import ip_address
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Lock
 
 import tomlkit
 import qrcode
@@ -48,6 +49,7 @@ VERSION = b.read(Path(__file__).with_name("VERSION"), "dev").strip()
 PUBLIC_HTTPS = os.environ.get("TTUI_REQUIRE_HTTPS") == "1"
 HOST_TYPES = {"main_hosts": "VPN", "ping_hosts": "Health check",
               "speedtest_hosts": "Speed test", "reverse_proxy_hosts": "Reverse proxy"}
+SERVICE_UNITS = {b.ENDPOINT_UNIT: "TrustTunnel Endpoint", b.ROUTER_UNIT: "Xray routing"}
 FILE_KEYS = ("vpn", "hosts", "credentials", "rules")
 OPERATION_ERRORS = (ValueError, ParseError, OSError, RuntimeError, subprocess.TimeoutExpired)
 app = Flask(__name__)
@@ -56,8 +58,25 @@ app.config.update(MAX_CONTENT_LENGTH=64 * 1024 * 1024, MAX_FORM_MEMORY_SIZE=4 * 
                   SESSION_COOKIE_SAMESITE="Strict", PERMANENT_SESSION_LIFETIME=timedelta(hours=12))
 
 
+_settings_lock = Lock()
+_settings_cache = None
+
+
 def settings():
-    return json.loads(b.read(SETTINGS))
+    """Read panel settings once per file version to keep every request cheap."""
+    global _settings_cache
+    try:
+        info = SETTINGS.stat()
+    except OSError:
+        return json.loads(b.read(SETTINGS))
+    key = (str(SETTINGS), info.st_mtime_ns, info.st_size)
+    with _settings_lock:
+        if _settings_cache is not None and _settings_cache[0] == key:
+            return _settings_cache[1]
+    config = json.loads(b.read(SETTINGS))
+    with _settings_lock:
+        _settings_cache = (key, config)
+    return config
 
 
 def request_settings():
@@ -129,7 +148,7 @@ def guard():
 @app.after_request
 def headers(response):
     response.headers.update({
-        "Cache-Control": "no-store",
+        "Cache-Control": "public, max-age=300" if request.endpoint == "static" else "no-store",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
         "Content-Security-Policy": "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -371,19 +390,55 @@ def dashboard():
     live = client_statistics(vpn) if accounts else None
     connected = sum(name in accounts and item["sessions"] > 0 for name, item in live.items()) if live is not None else None
     certificates = certificate_overview(hosts)
-    services = [("Panel", "active", True),
-                ("TrustTunnel Endpoint", b.service_state(b.ENDPOINT_UNIT) if configured else "unconfigured", configured),
-                ("Xray routing", b.service_state(b.ROUTER_UNIT), None)]
+    units = [b.ENDPOINT_UNIT, b.ROUTER_UNIT] + (["caddy.service"] if acme.enabled() else [])
+    states = b.service_states(units)
+    endpoint_state = states[b.ENDPOINT_UNIT] if configured else "unconfigured"
+    routed = routing_enabled()
+    router_state = states[b.ROUTER_UNIT] if routed else "disabled"
+    services = [
+        {"name": "Panel", "state": "active", "href": None, "unit": None},
+        {"name": "TrustTunnel Endpoint", "state": endpoint_state,
+         "href": url_for("endpoint"), "unit": b.ENDPOINT_UNIT if configured else None},
+        {"name": "Xray routing", "state": router_state,
+         "href": url_for("routing"), "unit": b.ROUTER_UNIT if routed else None},
+    ]
     if acme.enabled():
-        services.append(("Caddy", b.service_state("caddy.service"), True))
+        services.append({"name": "Caddy", "state": states["caddy.service"], "href": None, "unit": None})
+    tls_ok = bool(certificates) and all(
+        item["status"] is not None and item["status"]["days"] > 0 for item in certificates)
+    checks = [
+        {"label": "TrustTunnel configured", "ok": configured, "href": url_for("endpoint"), "required": True},
+        {"label": "Endpoint running", "ok": endpoint_state == "active", "href": url_for("endpoint"), "required": True},
+        {"label": "Client access", "ok": bool(accounts), "href": url_for("index"), "required": True},
+        {"label": "Valid TLS certificate", "ok": tls_ok, "href": url_for("tls_hosts"), "required": True},
+        {"label": "Panel HTTPS", "ok": PUBLIC_HTTPS or request.is_secure, "href": url_for("panel_settings"),
+         "required": False},
+    ]
     return render_template("dashboard.html", version=VERSION,
-                           endpoint=b.service_state(b.ENDPOINT_UNIT) if configured else "unconfigured",
-                           router=b.service_state(b.ROUTER_UNIT), clients=len(accounts) if accounts is not None else None,
+                           endpoint=endpoint_state,
+                           router=states[b.ROUTER_UNIT], clients=len(accounts) if accounts is not None else None,
                            connected=connected,
-                           metrics=host_metrics(b.STATE), services=services,
+                           metrics=host_metrics(b.STATE), services=services, checks=checks,
+                           ready=all(check["ok"] for check in checks if check["required"]),
                            certificates=certificates,
                            expiring=sum(1 for item in certificates if item["status"] is None or item["status"]["days"] <= 30),
                            events=activity.recent(8), samples=history(b.STATE, "24h"))
+
+
+@app.post("/services/restart")
+@action("dashboard")
+def restart_service():
+    unit = request.form.get("unit", "")
+    if unit not in SERVICE_UNITS:
+        raise ValueError("Choose a service managed by the panel.")
+    if unit == b.ENDPOINT_UNIT and not (b.VPN.is_file() and b.HOSTS.is_file()):
+        raise ValueError("Configure TrustTunnel before restarting the endpoint.")
+    if unit == b.ROUTER_UNIT and not routing_enabled():
+        raise ValueError("Enable routing before restarting Xray.")
+    b.service("restart", unit)
+    if unit == b.ENDPOINT_UNIT:
+        b.active_endpoint()
+    return saved("dashboard", f"{SERVICE_UNITS[unit]} restarted.")
 
 
 @app.get("/clients")
@@ -405,7 +460,11 @@ def index():
             manager.display_limits(entries)
             enabled_count = len(manager.entries) if vpn.get("credentials_file") else 0
             hosts = host_groups(b.read(b.HOSTS, "")).get("main_hosts", [])
-            address = request_settings().get("address") or (hosts[0].get("hostname", "") if hosts else "")
+            address = request_settings().get("address", "").strip()
+            if not address and hosts:
+                hostname = str(hosts[0].get("hostname", ""))
+                port = str(vpn.get("listen_address", "")).rsplit(":", 1)[-1]
+                address = f"{hostname}:{port}" if hostname and port.isdecimal() else hostname
             initialized = bool(vpn.get("listen_address") and hosts)
             can_remove_last = b.loopback(vpn)
         except OPERATION_ERRORS:
@@ -427,10 +486,12 @@ def monitoring():
     period = request.args.get("period", "1h")
     if period not in PERIODS:
         abort(400)
-    services = {"ttui": b.service_state("ttui.service"), "TrustTunnel": b.service_state(b.ENDPOINT_UNIT),
-                "Xray routing": b.service_state(b.ROUTER_UNIT)}
+    units = ["ttui.service", b.ENDPOINT_UNIT, b.ROUTER_UNIT] + (["caddy.service"] if acme.enabled() else [])
+    states = b.service_states(units)
+    services = {"ttui": states["ttui.service"], "TrustTunnel": states[b.ENDPOINT_UNIT],
+                "Xray routing": states[b.ROUTER_UNIT]}
     if acme.enabled():
-        services["Caddy"] = b.service_state("caddy.service")
+        services["Caddy"] = states["caddy.service"]
     return render_template("monitoring.html", period=period, periods=PERIODS, samples=history(b.STATE, period),
                            services=services, uptime=host_metrics(b.STATE, sample_cpu=False)["uptime"])
 
@@ -550,7 +611,7 @@ def update_client():
     manager = ClientManager(read_vpn())
     operation = request.form.get("operation", "")
     if not manager.vpn.get("credentials_file") and manager.entries:
-        raise ValueError("Select the existing client credentials file in Server settings.")
+        raise ValueError("Select the existing client credentials file in TrustTunnel settings.")
     names = list(dict.fromkeys(request.form.getlist("selected"))) if operation.startswith("bulk-") else [
         request.form.get("username", "").strip()
     ]
@@ -582,32 +643,76 @@ def export():
     return render_template("export.html", username=name, content=content, fmt=fmt, qr_svg=qr_svg)
 
 
-def render_server(source, version, error=None):
-    return render_template("server.html", source=source, revision=version, save_error=error,
-                           routed=b.load_routing()["enabled"], launch=b.launch_options(),
-                           can_setup=not b.VPN.exists() and not b.HOSTS.exists(),
-                           setup_form=session.pop("setup_form", {}),
+def routing_enabled():
+    try:
+        return b.load_routing().get("enabled", False)
+    except OPERATION_ERRORS:
+        return False
+
+
+def quick_setup_hostname():
+    """Offer one-click setup when the panel is opened through a real DNS name."""
+    host = request.host
+    if host.startswith("[") and "]" in host:
+        host = host[1:host.index("]")]
+    else:
+        host = host.split(":", 1)[0]
+    host = host.strip().lower()
+    if not host or host == "localhost":
+        return None
+    try:
+        ip_address(host)
+        return None
+    except ValueError:
+        pass
+    try:
+        return tls.hostname(host)
+    except ValueError:
+        return None
+
+
+def render_endpoint_page(preview=None, candidate=None, source=None, source_revision=None, save_error=None,
+                         raw=None, vpn=None, hosts_raw=None, routing_raw=None):
+    raw = b.read(b.VPN) if raw is None else raw
+    vpn = tomlkit.parse(raw) if vpn is None else vpn
+    hosts_raw = b.read(b.HOSTS, "") if hosts_raw is None else hosts_raw
+    routing_raw = b.read(b.ROUTING, "") if routing_raw is None else routing_raw
+    if source is None:
+        _, _, source = server_sources()
+    return render_template(
+        "endpoint.html", can_setup=False, values=endpoint_form.values(vpn), groups=endpoint_form.FIELDS,
+        protocols=endpoint_form.PROTOCOLS, revision=revision((raw, hosts_raw, routing_raw)),
+        preview=preview, candidate=candidate or revision(tomlkit.dumps(vpn)),
+        form_schema=endpoint_form, routed=routing_enabled(), source=source,
+        source_revision=source_revision or revision(source), launch=b.launch_options(), save_error=save_error)
+
+
+def render_setup_page():
+    return render_template("endpoint.html", can_setup=True, setup_form=session.pop("setup_form", {}),
                            acme_enabled=acme.enabled(),
-                           default_endpoint_port=8443 if PUBLIC_HTTPS else 443)
+                           default_endpoint_port=8443 if PUBLIC_HTTPS else 443,
+                           quick_hostname=quick_setup_hostname())
 
 
 @app.get("/server")
-@action("index")
 def server():
-    _, _, source = server_sources()
-    return render_server(source, revision(source))
+    """Keep old links working; the TrustTunnel page is now /endpoint."""
+    return endpoint()
 
 
 @app.route("/endpoint", methods=["GET", "POST"])
-@action("server")
+@action("endpoint")
 def endpoint():
+    if not (b.VPN.is_file() and b.HOSTS.is_file()):
+        if request.method == "POST":
+            raise ValueError("Complete TrustTunnel setup first.")
+        return render_setup_page()
     raw = b.read(b.VPN)
     vpn = tomlkit.parse(raw)
     hosts_raw = b.read(b.HOSTS, "")
     routing_raw = b.read(b.ROUTING, "")
-    routed = b.load_routing()["enabled"]
+    routed = routing_enabled()
     original = (raw, hosts_raw, routing_raw)
-    preview = None
     if request.method == "POST":
         check_revision(original)
         endpoint_form.update(vpn, request.form, (80, 443) if PUBLIC_HTTPS else (), routed)
@@ -624,15 +729,15 @@ def endpoint():
             return saved("endpoint", "TrustTunnel settings applied. Previous configuration saved in Backups.")
         if request.form.get("operation") != "preview":
             abort(400)
-        preview = "".join(unified_diff(raw.splitlines(keepends=True), candidate.splitlines(keepends=True),
-                                       fromfile="Current", tofile="Proposed"))
-    return render_template("endpoint.html", values=endpoint_form.values(vpn), groups=endpoint_form.FIELDS,
-                           protocols=endpoint_form.PROTOCOLS, revision=revision(original), preview=preview,
-                           candidate=revision(tomlkit.dumps(vpn)), form_schema=endpoint_form, routed=routed)
+        return render_endpoint_page(
+            preview="".join(unified_diff(raw.splitlines(keepends=True), candidate.splitlines(keepends=True),
+                                         fromfile="Current", tofile="Proposed")),
+            candidate=revision(candidate), raw=raw, vpn=vpn, hosts_raw=hosts_raw, routing_raw=routing_raw)
+    return render_endpoint_page(raw=raw, vpn=vpn, hosts_raw=hosts_raw, routing_raw=routing_raw)
 
 
 @app.route("/filters", methods=["GET", "POST"])
-@action("server")
+@action("filters")
 def filters():
     raw = b.read(b.VPN)
     vpn = tomlkit.parse(raw)
@@ -681,7 +786,7 @@ def filters():
 
 
 @app.post("/server")
-@action("server")
+@action("endpoint")
 def save_server():
     data = {key: request.form.get(key, "").replace("\r\n", "\n").replace("\r", "\n") for key in FILE_KEYS}
     before, old_paths, previous = server_sources()
@@ -706,25 +811,26 @@ def save_server():
                 changes[path] = data[key]
         b.apply_endpoint(changes, vpn)
     except OPERATION_ERRORS as error:
-        return render_server(data, request.form["revision"], str(error)), 400
-    return saved("server", "Configuration saved. TrustTunnel restarted.")
+        return render_endpoint_page(source=data, source_revision=request.form.get("revision"),
+                                    save_error=str(error)), 400
+    return saved("endpoint", "Configuration saved. TrustTunnel restarted.")
 
 
 @app.post("/launch")
-@action("server")
+@action("endpoint")
 def save_launch():
     options = {key: request.form.get(key, "").strip() for key in
                ("loglvl", "logfile", "jobs", "sentry_dsn")}
     b.endpoint_command(options)
     b.apply_endpoint({b.LAUNCH: json.dumps(options, indent=2) + "\n"}, read_vpn())
-    return saved("server", "Startup options saved.")
+    return saved("endpoint", "Startup options saved.")
 
 
 @app.post("/setup")
-@action("server")
+@action("endpoint")
 def setup_endpoint():
     if b.VPN.exists() or b.HOSTS.exists():
-        raise ValueError("Endpoint configuration already exists. Open Server settings to manage it.")
+        raise ValueError("Endpoint configuration already exists. Open TrustTunnel settings to manage it.")
     form = request.form
     hostname = tls.hostname(form.get("hostname", ""))
     address = ip_address(form.get("bind", "").strip())
@@ -788,7 +894,7 @@ def tls_hosts():
             configured = b.VPN.is_file()
         except OPERATION_ERRORS as error:
             flash(str(error), "error")
-            return redirect(url_for("server"))
+            return redirect(url_for("endpoint"))
     certificate_info = {}
     for records in hosts.values():
         for record in records:
@@ -1082,7 +1188,7 @@ def main():
              "trusted_proxy_count": 1, "clear_untrusted_proxy_headers": True,
              "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto"}} if PUBLIC_HTTPS else {}
     serve(app, host=host, port=port,
-          threads=4, max_request_body_size=app.config["MAX_CONTENT_LENGTH"], **proxy)
+          threads=8, max_request_body_size=app.config["MAX_CONTENT_LENGTH"], **proxy)
 
 
 if __name__ == "__main__":

@@ -6,8 +6,12 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Lock
 
 import backend as b
+
+_status_cache = {}
+_status_lock = Lock()
 
 PEM_LIMIT = 512 * 1024
 DNS_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -70,7 +74,22 @@ def existing_pair(cert, key, host):
 
 
 def certificate_status(value):
+    """Inspect a certificate once per file version; dashboards read it often."""
     try:
-        return inspect(path(value))
-    except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired):
+        certificate = path(value)
+        info = certificate.stat()
+    except (ValueError, OSError):
         return None
+    key = (str(certificate), info.st_mtime_ns, info.st_ctime_ns, info.st_size)
+    with _status_lock:
+        if key in _status_cache:
+            return _status_cache[key]
+    try:
+        status = inspect(certificate)
+    except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired):
+        status = None
+    with _status_lock:
+        if len(_status_cache) >= 64:
+            _status_cache.clear()
+        _status_cache[key] = status
+    return status

@@ -1,7 +1,9 @@
 import re
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from werkzeug.security import generate_password_hash
@@ -101,6 +103,35 @@ class PanelTest(unittest.TestCase):
             self.assertIn(b"Not configured", page.data)
             self.assertIn(b"Administrator sign-in", page.data)
             self.assertIn(b"Completed", page.data)
+            self.assertIn(b"Node readiness", page.data)
+            self.assertIn(b"Needs attention", page.data)
+
+    def test_dashboard_marks_a_node_ready_when_required_checks_pass(self):
+        vpn = self.state / "vpn.toml"
+        hosts = self.state / "hosts.toml"
+        clients = self.state / "clients.toml"
+        vpn.write_text('listen_address = "0.0.0.0:8443"\ncredentials_file = "clients.toml"\n', encoding="utf-8")
+        hosts.write_text('[[main_hosts]]\nhostname = "vpn.example"\n'
+                         'cert_chain_path = "cert.pem"\nprivate_key_path = "key.pem"\n', encoding="utf-8")
+        clients.write_text('[[client]]\nusername = "demo"\npassword = "secret"\n', encoding="utf-8")
+        config = {"path": "/ttui", "secret": "test-secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("correct-password", method="pbkdf2:sha256:1000")}
+        status = {"expires": "2027-12-01T00:00+00:00", "days": 300, "fingerprint": "AA:BB"}
+        stats = {"demo": {"sessions": 1, "inbound": 10, "outbound": 20, "ip": "192.0.2.1"}}
+        with patch.object(panel, "settings", return_value=config), patch.dict(
+            panel.app.config, SECRET_KEY=config["secret"]
+        ), patch.object(panel.b, "CONFIG", self.state), patch.object(panel.b, "VPN", vpn), patch.object(
+            panel.b, "HOSTS", hosts), patch.object(panel, "history", return_value=[]
+        ), patch.object(panel.b, "service_states", side_effect=lambda units: {unit: "active" for unit in units}), \
+                patch.object(panel, "client_statistics", return_value=stats), patch.object(
+                    panel.tls, "certificate_status", return_value=status):
+            client = panel.app.test_client()
+            page = client.get("/ttui/login")
+            token = re.search(rb'name="csrf" value="([^"]+)"', page.data)[1].decode()
+            client.post("/ttui/login", data={"csrf": token, "username": "admin", "password": "correct-password"})
+            page = client.get("/ttui/")
+            self.assertIn(b'class="status online">Ready', page.data)
+            self.assertIn(b"Connected client accounts", page.data)
 
     def test_dashboard_warns_about_certificates_expiring_soon(self):
         vpn = self.state / "vpn.toml"
@@ -124,6 +155,77 @@ class PanelTest(unittest.TestCase):
             self.assertIn(b"vpn.example", page.data)
             self.assertIn(b"Expires in 5 days", page.data)
             self.assertIn(b"1 needs attention", page.data)
+
+    def test_quick_setup_form_uses_the_open_panel_hostname(self):
+        config = {"path": "/ttui", "secret": "test-secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("correct-password", method="pbkdf2:sha256:1000")}
+        with patch.object(panel, "settings", return_value=config), patch.dict(
+            panel.app.config, SECRET_KEY=config["secret"]
+        ), patch.object(panel.b, "VPN", self.state / "vpn.toml"), patch.object(
+            panel.b, "HOSTS", self.state / "hosts.toml"
+        ):
+            client = panel.app.test_client()
+            page = client.get("/ttui/login", base_url="http://panel.example.com")
+            token = re.search(rb'name="csrf" value="([^"]+)"', page.data)[1].decode()
+            client.post("/ttui/login", base_url="http://panel.example.com", data={
+                "csrf": token, "username": "admin", "password": "correct-password",
+            })
+            page = client.get("/ttui/server", base_url="http://panel.example.com")
+            self.assertIn(b"Create node on panel.example.com:443", page.data)
+            self.assertIn(b"Start TrustTunnel", page.data)
+
+    def test_quick_setup_uses_a_real_panel_hostname_only(self):
+        with panel.app.test_request_context("/", base_url="http://panel.example.com"):
+            self.assertEqual(panel.quick_setup_hostname(), "panel.example.com")
+        with panel.app.test_request_context("/", base_url="http://127.0.0.1:8080"):
+            self.assertIsNone(panel.quick_setup_hostname())
+        with panel.app.test_request_context("/", base_url="http://localhost"):
+            self.assertIsNone(panel.quick_setup_hostname())
+
+    def test_settings_cache_reloads_after_a_write(self):
+        path = self.state / "panel.json"
+        config = {"path": "/ttui", "secret": "test-secret", "username": "admin", "secure_cookie": False}
+        panel.b.write_json(path, config)
+        with patch.object(panel, "SETTINGS", path):
+            first = panel.settings()
+            self.assertIs(panel.settings(), first)
+            config["username"] = "operator"
+            time.sleep(0.003)
+            panel.b.write_json(path, config)
+            self.assertEqual(panel.settings()["username"], "operator")
+
+    def test_static_assets_are_cacheable_but_pages_are_not(self):
+        config = {"path": "/ttui", "secret": "test-secret", "username": "admin", "secure_cookie": False,
+                  "password_hash": generate_password_hash("correct-password", method="pbkdf2:sha256:1000")}
+        with patch.object(panel, "settings", return_value=config), patch.dict(
+            panel.app.config, SECRET_KEY=config["secret"]
+        ):
+            client = panel.app.test_client()
+            page = client.get("/ttui/login")
+            asset = client.get("/ttui/static/style.css")
+            self.assertEqual(page.headers["Cache-Control"], "no-store")
+            self.assertEqual(asset.headers["Cache-Control"], "public, max-age=300")
+            page.close()
+            asset.close()
+
+    def test_service_states_uses_one_systemctl_call(self):
+        result = SimpleNamespace(stdout="active\ninactive\n", returncode=3)
+        with patch.object(panel.b.subprocess, "run", return_value=result) as run:
+            self.assertEqual(panel.b.service_states(["one.service", "two.service"]),
+                             {"one.service": "active", "two.service": "inactive"})
+            run.assert_called_once()
+
+    def test_certificate_status_is_cached_by_file_version(self):
+        certificate = self.state / "cert.pem"
+        certificate.write_text("pem", encoding="utf-8")
+        status = {"expires": "2026-12-01T00:00+00:00", "days": 5, "fingerprint": "AA:BB"}
+        with patch.object(panel.tls, "path", return_value=certificate), patch.object(
+            panel.tls, "inspect", return_value=status
+        ) as inspect:
+            panel.tls._status_cache.clear()
+            self.assertEqual(panel.tls.certificate_status("cert.pem"), status)
+            self.assertEqual(panel.tls.certificate_status("cert.pem"), status)
+            self.assertEqual(inspect.call_count, 1)
 
     def test_routing_preserves_priority_and_default(self):
         rules = [{"domain": [r"regexp:^test\.example$"], "outboundTag": "direct"},

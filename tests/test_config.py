@@ -277,7 +277,7 @@ class ConfigTest(unittest.TestCase):
             response.read.return_value = json.dumps([entry]).encode()
             self.assertEqual(client_statistics(vpn), {"laptop": {"sessions": 0, "inbound": 1024, "outbound": 0,
                                                                 "ip": "2001:db8::1"}})
-            connect.assert_called_once_with("::1", 1987, timeout=0.75)
+            connect.assert_called_once_with("::1", 1987, timeout=0.4)
             response.read.return_value = json.dumps([entry, {**entry, "sessions": True}]).encode()
             self.assertIsNone(client_statistics(vpn))
             response.read.return_value = json.dumps([entry, entry]).encode()
@@ -298,6 +298,22 @@ class ConfigTest(unittest.TestCase):
         self.assertIn(b"Page 2 of 2", page.data)
         self.assertIn(b">client-50</span>", page.data)
         self.assertNotIn(b">client-49</span>", page.data)
+        self.assertIn(b'value="vpn.example.com:443"', page.data)
+
+    def test_restart_service_accepts_only_configured_managed_units(self):
+        b.VPN.write_text('listen_address = "127.0.0.1:443"\n', encoding="utf-8")
+        b.HOSTS.write_text("", encoding="utf-8")
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), panel.app.test_request_context(
+                "/services/restart", method="POST", data={"unit": b.ENDPOINT_UNIT}):
+            self.assertEqual(panel.restart_service().status_code, 302)
+        self.service.assert_called_once_with("restart", b.ENDPOINT_UNIT)
+        self.active.assert_called_once()
+        self.service.reset_mock()
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), panel.app.test_request_context(
+                "/services/restart", method="POST", data={"unit": "caddy.service"}):
+            self.assertEqual(panel.restart_service().status_code, 302)
+            self.assertIn("Choose a service", panel.session["_flashes"][0][1])
+        self.service.assert_not_called()
 
     def test_dashboard_only_counts_connected_configured_accounts(self):
         b.VPN.write_text('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n', encoding="utf-8")

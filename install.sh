@@ -50,7 +50,6 @@ with os.fdopen(os.open("/var/lib/ttui/update-request", os.O_RDONLY | os.O_NOFOLL
 
 check_public_domain() {
     local domain=$1 label='[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
-    command -v ss >/dev/null || { echo "Install iproute2 to check the HTTPS ports." >&2; return 1; }
     if [[ ${#domain} -gt 253 || ! $domain =~ ^$label(\.$label)+$ ]] ||
         ! getent ahosts "$domain" >/dev/null; then
         echo "Set a DNS record for the panel and pass its hostname with --domain." >&2
@@ -60,7 +59,7 @@ check_public_domain() {
         echo "Existing Caddy installation detected. Use --external-proxy with your own configuration." >&2
         return 1
     fi
-    if [[ -n $(ss -H -ltn 'sport = :80 or sport = :443') ]]; then
+    if command -v ss >/dev/null && [[ -n $(ss -H -ltn 'sport = :80 or sport = :443') ]]; then
         echo "TCP ports 80 and 443 must be free for Caddy." >&2
         return 1
     fi
@@ -78,6 +77,7 @@ start_panel_https() {
     local domain=$1 port=$2
     cat >/etc/caddy/Caddyfile <<EOF
 $domain {
+    encode zstd gzip
     reverse_proxy 127.0.0.1:$port
 }
 
@@ -474,7 +474,7 @@ main() {
                 exit 1
             fi
         else
-            echo "Sign in and open Server > Set up TrustTunnel to configure and start the VPN endpoint."
+            echo "Sign in and open TrustTunnel to create the VPN node."
         fi
     fi
     for unit in "${active[@]}"; do

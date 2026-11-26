@@ -16,6 +16,7 @@ LABELS = {
     "revoke_sessions": "Signed out all sessions",
     "mfa": "Authenticator settings changed",
     "diagnostics": "Diagnostics run",
+    "restart_service": "Service restarted",
     "backups": "Backup operation",
     "updates": "Update operation",
     "update_client": "Client settings changed",
