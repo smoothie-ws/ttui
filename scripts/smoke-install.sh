@@ -64,14 +64,16 @@ import tempfile
 import threading
 import time
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import HTTPCookieProcessor, Request, build_opener
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[1]).read_text(), re.M)[1]
-client = build_opener(HTTPCookieProcessor(CookieJar()))
+cookies = CookieJar()
+client = build_opener(HTTPCookieProcessor(cookies))
 base = "http://127.0.0.1:8080/ttui"
 
 def get(path):
@@ -98,6 +100,17 @@ server = get("/server")
 assert "Set up TrustTunnel" in server
 page = submit("/setup", server, hostname="smoke.example", bind="127.0.0.1", port="17443", username="smoke")
 assert "TrustTunnel is running." in page, "Panel setup failed"
+cookie_header = "; ".join(f"{cookie.name}={cookie.value}" for cookie in cookies)
+
+def concurrent_read(item):
+    path, expected = item
+    with urlopen(Request(base + path, headers={"Cookie": cookie_header}), timeout=30) as response:
+        return response.status == 200 and expected in response.read().decode()
+
+with ThreadPoolExecutor(max_workers=8) as pool:
+    results = list(pool.map(concurrent_read, [("/", "Dashboard"), ("/clients", "smoke"),
+                                             ("/routing", "Routing")] * 20))
+assert all(results), "The panel failed concurrent authenticated reads"
 assert "tt://?" in submit("/export", page, username="smoke", address="127.0.0.1:17443", format="deeplink")
 exported = submit("/export", page, username="smoke", address="127.0.0.1:17443", format="toml")
 config_text = html.unescape(re.search(r'<textarea id="export-value"[^>]*>(.*?)</textarea>', exported, re.S)[1])

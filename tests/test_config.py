@@ -21,6 +21,15 @@ from routing import DEFAULT_ROUTING, FIRST_CASCADE_PORT, ROUTER_ADDRESS, compile
 
 
 class ConfigTest(unittest.TestCase):
+    def test_large_routing_ruleset_preserves_order_and_outbounds(self):
+        rules = [{"outboundTag": "block" if index % 2 else "direct", "domain": [f"full:host{index}.example"]}
+                 for index in range(5000)]
+        config, _ = compile_routing({**DEFAULT_ROUTING, "enabled": True, "rules": rules})
+        compiled = config["routing"]["rules"]
+        self.assertEqual(len(compiled), len(rules))
+        self.assertEqual([(row["outboundTag"], row["domain"]) for row in compiled],
+                         [(row["outboundTag"], row["domain"]) for row in rules])
+
     def test_routing_keeps_rule_priority_and_blocking_fallback(self):
         rules = [{"outboundTag": "direct", "domain": [r"regexp:^vpn\.example$"]},
                  {"outboundTag": "direct", "ip": ["geoip:private", "ext:custom.dat:local"]}]
