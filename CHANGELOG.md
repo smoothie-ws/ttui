@@ -13,6 +13,6 @@ First MVP release of the ttui web panel for a single TrustTunnel Endpoint.
 - TrustTunnel endpoint settings, TLS hosts, connection filters, advanced TOML editing, and startup options with reviewed diffs and automatic recovery.
 - Xray routing editor with outbounds, ordered rules, geodata uploads, and TrustTunnel cascades.
 - Backups with verification, import, restore, and schedules; TOTP authenticator and IP allowlist; service logs and diagnostics.
-- In-panel updates from official GitHub releases with a configuration snapshot and rollback on failure.
+- In-panel updates from official GitHub releases with a configuration snapshot and rollback on failure; updates wait for services to settle and `ttui recover` restores a saved copy.
 - Minimal borderless interface in the agentsys-client style with dark and light themes.
 - Release archive ships minified sources without documentation files; installed services skip bytecode caches.

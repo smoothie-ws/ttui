@@ -205,7 +205,7 @@ def verify_panel_http():
     config = settings()
     path = config["path"] + "/login"
     headers = {"X-Ttui-Health": health_token(config)}
-    for _ in range(12):
+    for _ in range(20):
         connection = HTTPConnection(host, port, timeout=1)
         try:
             connection.request("GET", path, headers=headers)

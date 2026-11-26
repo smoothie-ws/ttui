@@ -84,7 +84,17 @@ sudo ttui update
 sudo ttui update --version 26.11.26
 ```
 
-The installer selects the latest stable GitHub release by default. It preserves `/etc/trusttunnel`, `/var/lib/ttui`, systemd drop-in files, and `/etc/default/ttui`. It restarts active services, which can briefly interrupt VPN connections. If the update fails, the installer restores the previous application files and attempts to restart the services. Older releases cannot be installed over a newer one.
+The installer selects the latest stable GitHub release by default. It preserves `/etc/trusttunnel`, `/var/lib/ttui`, systemd drop-in files, and `/etc/default/ttui`. It restarts active services, which can briefly interrupt VPN connections. If the panel fails to start after an update, the installer restores the previous application files and restarts the services; a slow VPN unit only gets a warning instead of rolling back the panel. Older releases cannot be installed over a newer one.
+
+If an update still fails and prints a recovery directory, restore that copy:
+
+```bash
+sudo ttui recover /var/tmp/ttui-recovery.<id>
+sudo ttui info
+journalctl -u ttui -n 50 --no-pager
+```
+
+`ttui recover` without a directory uses the newest `/var/tmp/ttui-recovery.*` copy. The update log now dumps the failing unit's status and journal lines before restoring.
 
 ## Backups
 
