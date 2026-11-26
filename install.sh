@@ -171,14 +171,24 @@ seed_geofile() {
 }
 
 wait_service() {
-    local unit=$1 before after
-    before=$(systemctl show -p MainPID --value "$unit")
-    for _ in {1..6}; do
+    local unit=$1 state stable=0
+    for _ in {1..60}; do
+        state=$(systemctl is-active "$unit" 2>/dev/null || true)
+        case "$state" in
+            active)
+                stable=$((stable + 1))
+                if (( stable >= 2 )); then return 0; fi
+                ;;
+            failed)
+                return 1
+                ;;
+            *)
+                stable=0
+                ;;
+        esac
         sleep 0.5
-        systemctl is-active --quiet "$unit" || return 1
     done
-    after=$(systemctl show -p MainPID --value "$unit")
-    [[ $before != 0 && $before == "$after" ]]
+    return 1
 }
 
 restore_install() {
@@ -227,6 +237,11 @@ finish_update() {
     shift 2
     if (( status )); then
         echo "Update failed. Restoring previous installation." >&2
+        for unit in "$@"; do
+            echo "--- systemctl status $unit ---" >&2
+            systemctl status --no-pager --lines=3 "$unit" >&2 || true
+            journalctl -u "$unit" -n 8 --no-pager >&2 || true
+        done
         if ! restore_install "$backup" "$@"; then
             recovery=$(mktemp -d /var/tmp/ttui-recovery.XXXXXX)
             cp -a -- "$backup"/. "$recovery"
@@ -243,7 +258,7 @@ main() {
     local architecture xray_arch endpoint_sha client_sha xray_sha
     local config=/etc/trusttunnel state=/var/lib/ttui
     local -a forwarded=() active=()
-    local unit file directory credentials bind port
+    local unit file directory credentials bind port recovery
     if [[ $# == 1 && $1 == --release-info ]]; then
         release_info "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
         return
@@ -278,6 +293,40 @@ main() {
         fi
         return
     fi
+    if [[ ${1:-} == recover ]]; then
+        if [[ $EUID != 0 ]]; then echo "Run as root." >&2; return 1; fi
+        recovery=''
+        if [[ -n ${2:-} ]]; then
+            recovery=$2
+        else
+            recovery=$(ls -dt /var/tmp/ttui-recovery.* 2>/dev/null | head -n 1) || true
+        fi
+        if [[ -z $recovery || ! -d $recovery/panel ]]; then
+            echo "No recovery backup found. Pass the directory printed in the update log." >&2
+            return 1
+        fi
+        systemctl stop ttui.service ttui-router.service trusttunnel.service 2>/dev/null || true
+        rm -rf -- "$panel.rejected"
+        mv -- "$panel" "$panel.rejected" 2>/dev/null || true
+        cp -a -- "$recovery/panel" "$panel"
+        if [[ -d $recovery/etc/systemd/system ]]; then
+            cp -a -- "$recovery/etc/systemd/system/." /etc/systemd/system/
+        fi
+        if [[ -f $recovery/etc/sudoers.d/ttui ]]; then
+            install -m 0440 -- "$recovery/etc/sudoers.d/ttui" /etc/sudoers.d/ttui
+        fi
+        if [[ -f $recovery/opt/trusttunnel/trusttunnel_endpoint ]]; then
+            install -m 0755 -- "$recovery/opt/trusttunnel/trusttunnel_endpoint" "$endpoint"
+        fi
+        systemctl daemon-reload
+        if systemctl start ttui.service && wait_service ttui.service; then
+            echo "Recovered ttui $(cat "$panel/VERSION" 2>/dev/null || true). Open it with: sudo ttui info"
+        else
+            echo "Files restored, but the panel did not start. Check: journalctl -u ttui.service" >&2
+            return 1
+        fi
+        return
+    fi
     if [[ ${1:-} == update ]]; then shift; fi
     while (( $# )); do
         case "$1" in
@@ -288,7 +337,7 @@ main() {
             --local) access=local; forwarded+=(--local) ;;
             --external-proxy) access=external; forwarded+=(--external-proxy) ;;
             --newer-only) newer_only=1; forwarded+=(--newer-only) ;;
-            *) echo "Usage: ttui [info|version|update] [--version YY.MM.DD | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT]" >&2; return 2 ;;
+            *) echo "Usage: ttui [info|version|update|recover [DIR]] [--version YY.MM.DD | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT]" >&2; return 2 ;;
         esac
         shift
     done
@@ -534,8 +583,14 @@ main() {
         echo
     fi
     for unit in "${active[@]}"; do
-        systemctl restart "$unit"
-        wait_service "$unit"
+        if systemctl restart "$unit" && wait_service "$unit"; then
+            continue
+        fi
+        if [[ $unit == ttui.service ]]; then
+            echo "The panel failed to start after the update." >&2
+            exit 1
+        fi
+        echo "Warning: $unit did not restart. Check: journalctl -u $unit" >&2
     done
     ln -sfn "$panel/install.sh" "$launcher"
     systemctl enable --now ttui-metrics.timer ttui-backups.timer
