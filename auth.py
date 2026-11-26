@@ -14,7 +14,6 @@ WINDOW = 60
 LIMIT = 10
 OTP_PERIOD = 30
 
-
 def reserve_attempt(database, address, now=None):
     now = int(time.time()) if now is None else now
     with closing(sqlite3.connect(database)) as connection, connection:
@@ -33,11 +32,9 @@ def reserve_attempt(database, address, now=None):
             ON CONFLICT(address) DO UPDATE SET attempts = attempts + 1""", (address, now))
         return 0
 
-
 def clear_attempts(database, address):
     with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("DELETE FROM login_attempts WHERE address = ?", (address,))
-
 
 def normalize_networks(value):
     if not isinstance(value, list) or len(value) > 64 or any(
@@ -49,7 +46,6 @@ def normalize_networks(value):
     except ValueError as error:
         raise ValueError("Enter valid IPv4 or IPv6 addresses or CIDR ranges.") from error
 
-
 def address_allowed(networks, address):
     if networks == []:
         return True
@@ -60,27 +56,22 @@ def address_allowed(networks, address):
     except ValueError:
         return False
 
-
 def new_totp_secret():
     return base64.b32encode(secrets.token_bytes(20)).decode("ascii")
 
-
 def valid_totp_secret(secret):
     return isinstance(secret, str) and re.fullmatch(r"[A-Z2-7]{32}", secret) is not None
-
 
 def totp_uri(secret, account):
     label = "ttui:" + quote(account.replace(":", " "), safe="")
     query = urlencode({"secret": secret, "issuer": "ttui"})
     return f"otpauth://totp/{label}?{query}"
 
-
 def totp_code(key, counter, digits=6):
     digest = hmac.digest(key, counter.to_bytes(8, "big"), "sha1")
     offset = digest[-1] & 15
     number = int.from_bytes(digest[offset:offset + 4], "big") & 0x7fffffff
     return str(number % 10 ** digits).zfill(digits)
-
 
 def use_totp(database, secret, code, now=None):
     if not valid_totp_secret(secret) or not re.fullmatch(r"[0-9]{6}", code):

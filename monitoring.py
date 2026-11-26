@@ -11,13 +11,11 @@ _last_cpu = None
 PERIODS = {"1h": 3600, "24h": 86400, "7d": 604800, "30d": 2592000}
 RETENTION = PERIODS["30d"]
 
-
 def proc(name):
     try:
         return (Path("/proc") / name).read_text(encoding="ascii").splitlines()
     except OSError:
         return []
-
 
 def cpu_counters():
     lines = proc("stat")
@@ -26,7 +24,6 @@ def cpu_counters():
     counters = [int(value) for value in lines[0].split()[1:9]]
     return sum(counters), counters[3] + counters[4]
 
-
 def cpu_percent(current, previous):
     total, idle = current
     if (previous and total is not None and previous[0] is not None
@@ -34,14 +31,12 @@ def cpu_percent(current, previous):
         return max(0, min(100, round(100 * (1 - (idle - previous[1]) / (total - previous[0])))))
     return None
 
-
 def cpu_usage():
     global _last_cpu
     counters = cpu_counters()
     with _lock:
         previous, _last_cpu = _last_cpu, counters
     return cpu_percent(counters, previous)
-
 
 def host_metrics(storage, sample_cpu=True):
     memory = {line.split(":")[0]: int(line.split()[1]) for line in proc("meminfo")}
@@ -61,7 +56,6 @@ def host_metrics(storage, sample_cpu=True):
         "traffic": (sum(int(row[1]) for row in interfaces), sum(int(row[9]) for row in interfaces))
         if traffic else None,
     }
-
 
 def collect_sample(storage, now=None):
     now = int(time.time()) if now is None else now
@@ -90,7 +84,6 @@ def collect_sample(storage, now=None):
         db.execute("INSERT OR REPLACE INTO samples VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                    (now, cpu, metrics["ram"], metrics["disk"], rx_rate, tx_rate, uptime, total, idle, rx, tx))
         db.execute("DELETE FROM samples WHERE at < ?", (now - RETENTION,))
-
 
 def history(storage, period, now=None):
     now = int(time.time()) if now is None else now

@@ -14,7 +14,6 @@ PROFILE_FIELDS = {"group": 64, "device": 128, "notes": 1000}
 LIMIT_FIELDS = {"max_http2_conns": "HTTP/1.1 and HTTP/2 limit", "max_http3_conns": "HTTP/3 limit"}
 METRICS_LIMIT = 4 * 1024 * 1024
 
-
 def client_statistics(vpn):
     metrics = vpn.get("metrics")
     protocols = vpn.get("listen_protocols")
@@ -58,7 +57,6 @@ def client_statistics(vpn):
         return None
     finally:
         connection.close()
-
 
 class ClientManager:
     def __init__(self, vpn):

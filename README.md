@@ -86,7 +86,7 @@ The **Release** workflow verifies the tagged commit, reruns the checks, and publ
 
 ## Dashboard
 
-The dashboard shows the state of the panel, TrustTunnel Endpoint, Xray routing, and Caddy when it is managed by ttui. A readiness checklist links the remaining setup steps, and endpoint or Xray can be restarted without SSH. It also shows host CPU, memory, disk space, uptime, client totals, real host traffic, the last 24 hours of load and traffic from the metrics service, certificate expiry warnings, and recent administrative activity. Connected client accounts appear only when the Endpoint exposes per-client metrics; the panel does not invent session or per-client traffic values.
+The dashboard shows the state of the panel, TrustTunnel Endpoint, Xray routing, and Caddy when it is managed by ttui. A readiness checklist links the remaining setup steps, and endpoint or Xray can be restarted without SSH. It also shows host CPU, memory, disk space, uptime, client totals, real host traffic, load and traffic history for 1 hour, 24 hours, 7 days, or 30 days, certificate expiry warnings, and recent administrative activity. Connected client accounts appear only when the Endpoint exposes per-client metrics; the panel does not invent session or per-client traffic values.
 
 Panel settings are cached by file version, service states are queried in one systemctl call, certificate inspection is reused until the file changes, and static assets are cacheable. Caddy compresses managed HTTPS responses. The Waitress service handles eight concurrent requests by default.
 

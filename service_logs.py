@@ -18,7 +18,6 @@ SOURCES = {
 }
 LEVELS = ["Emergency", "Alert", "Critical", "Error", "Warning", "Notice", "Info", "Debug"]
 
-
 def read_logs(source, query="", priority=None, after=None, before=None):
     _, unit, identifier = SOURCES[source]
     args = ["/usr/bin/sudo", "-n", "/usr/bin/journalctl",

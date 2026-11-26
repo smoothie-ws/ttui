@@ -20,12 +20,10 @@ SEMVER = r"(?:0|[1-9][0-9]{0,5})(?:\.(?:0|[1-9][0-9]{0,5})){2}"
 ASSETS = {"ttui.tar.gz", "ttui.tar.gz.sha256", "release-info.json"}
 MIN_SPACE = 256 * 1024 * 1024
 
-
 def version_number(value):
     if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
         raise ValueError("Expected a stable numeric release version.")
     return tuple(map(int, value.split(".")))
-
 
 def metadata(data, version):
     if not isinstance(data, dict) or data.get("format") != 1 or data.get("version") != version:
@@ -40,7 +38,6 @@ def metadata(data, version):
         raise ValueError("The release compatibility metadata is invalid.")
     return data
 
-
 def fetch(url, limit):
     request = Request(url, headers={"Accept": "application/json", "User-Agent": "ttui-update-check"})
     try:
@@ -52,13 +49,11 @@ def fetch(url, limit):
     except (URLError, OSError, UnicodeError, ValueError) as error:
         raise ValueError("Could not read the official ttui release metadata. Try again later.") from error
 
-
 def installed_components(version):
     try:
         return metadata(json.loads(b.read(RELEASE_INFO)), version)["components"]
     except (OSError, ValueError):
         return {}
-
 
 def compatibility(info):
     distro = next((line[3:].strip("\"'") for line in b.read(Path("/etc/os-release"), "").splitlines()
@@ -70,7 +65,6 @@ def compatibility(info):
     if any(shutil.disk_usage(path).free < MIN_SPACE for path in (b.STATE, RELEASE_INFO.parent, Path("/tmp"))):
         return "Free at least 256 MiB on the panel, state, and temporary filesystems before updating."
     return None
-
 
 def latest(installed):
     data = fetch(LATEST, 1024 * 1024)
@@ -100,10 +94,8 @@ def latest(installed):
     release["compatible"] = release["problem"] is None
     return release
 
-
 def request_file():
     return b.STATE / "update-request"
-
 
 def status():
     try:
@@ -115,7 +107,6 @@ def status():
     return {"available": values.get("LoadState") == "loaded", "tag": tag if re.fullmatch("v" + SEMVER, tag) else "",
             "busy": values.get("ActiveState") in ("activating", "active", "deactivating"),
             "failed": values.get("ActiveState") == "failed"}
-
 
 def queue(tag):
     if not isinstance(tag, str) or not re.fullmatch("v" + SEMVER, tag):

@@ -57,10 +57,8 @@ app.config.update(MAX_CONTENT_LENGTH=64 * 1024 * 1024, MAX_FORM_MEMORY_SIZE=4 * 
                   SESSION_COOKIE_HTTPONLY=True,
                   SESSION_COOKIE_SAMESITE="Strict", PERMANENT_SESSION_LIFETIME=timedelta(hours=12))
 
-
 _settings_lock = Lock()
 _settings_cache = None
-
 
 def settings():
     """Read panel settings once per file version to keep every request cheap."""
@@ -78,10 +76,8 @@ def settings():
         _settings_cache = (key, config)
     return config
 
-
 def request_settings():
     return request.environ.get("ttui.settings") or settings()
-
 
 class PanelSession(SecureCookieSessionInterface):
     def get_cookie_path(self, app):
@@ -90,9 +86,7 @@ class PanelSession(SecureCookieSessionInterface):
     def get_cookie_secure(self, app):
         return PUBLIC_HTTPS or request_settings()["secure_cookie"]
 
-
 app.session_interface = PanelSession()
-
 
 def mounted_app(wsgi_app):
     def dispatch(environ, start_response):
@@ -111,18 +105,14 @@ def mounted_app(wsgi_app):
 
     return dispatch
 
-
 app.wsgi_app = mounted_app(app.wsgi_app)
-
 
 def session_id(config):
     return hmac.digest(config["secret"].encode(), config["password_hash"].encode()
                        + config.get("session_epoch", "").encode(), "sha256").hex()
 
-
 def health_token(config):
     return hmac.digest(config["secret"].encode(), b"ttui sign-in health check", "sha256").hex()
-
 
 @app.before_request
 def guard():
@@ -144,7 +134,6 @@ def guard():
         if not token or not hmac.compare_digest(request.form.get("csrf", "").encode(), token.encode()):
             abort(403)
 
-
 @app.after_request
 def headers(response):
     response.headers.update({
@@ -162,7 +151,6 @@ def headers(response):
             activity.record(event, result, request.remote_addr)
     return response
 
-
 @app.get(acme.CHALLENGE_PREFIX + "<token>")
 def acme_challenge(token):
     payload = acme.challenge(token)
@@ -170,15 +158,12 @@ def acme_challenge(token):
         abort(404)
     return payload, 200, {"Content-Type": "text/plain; charset=ascii"}
 
-
 @app.context_processor
 def template_context():
     return {"csrf": lambda: session.setdefault("csrf", secrets.token_urlsafe(32))}
 
-
 def authenticated(config):
     return hmac.compare_digest(session.get("auth", ""), session_id(config))
-
 
 def action(page):
     def decorate(function):
@@ -206,16 +191,13 @@ def action(page):
         return wrapped
     return decorate
 
-
 def saved(page, message):
     flash(message)
     return redirect(url_for(page))
 
-
 def panel_bind():
     host = "127.0.0.1" if PUBLIC_HTTPS else os.environ.get("TTUI_BIND", "127.0.0.1")
     return host, int(os.environ.get("TTUI_PORT", "8080"))
-
 
 def verify_panel_http():
     host, port = panel_bind()
@@ -236,7 +218,6 @@ def verify_panel_http():
             connection.close()
         time.sleep(0.5)
     raise RuntimeError("The panel sign-in page did not respond on its configured address.")
-
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -268,12 +249,10 @@ def login():
         return redirect(url_for("dashboard"))
     return render_template("login.html")
 
-
 @app.post("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
-
 
 @app.post("/sessions/revoke")
 @action("panel_settings")
@@ -285,7 +264,6 @@ def revoke_sessions():
     b.write_json(SETTINGS, config)
     session.clear()
     return redirect(url_for("login"))
-
 
 @app.post("/mfa")
 @action("panel_settings")
@@ -329,10 +307,8 @@ def mfa():
     app.logger.info("Audit: authenticator %s from %r", "enabled" if operation == "enable" else "disabled", request.remote_addr)
     return saved("panel_settings", "Authenticator settings saved. Other sessions were signed out.")
 
-
 def read_vpn():
     return tomlkit.parse(b.read(b.VPN, ""))
-
 
 def server_sources():
     raw = b.read(b.VPN, "")
@@ -344,21 +320,17 @@ def server_sources():
     return vpn, paths, dict(vpn=raw, hosts=b.read(b.HOSTS, ""),
                             credentials=b.read(paths[0], ""), rules=b.read(paths[1], ""))
 
-
 def host_groups(raw):
     hosts = tomlkit.parse(raw)
     return {group: [entry for entry in entries if isinstance(entry, dict)]
             for group in HOST_TYPES if isinstance(entries := hosts.get(group), list)}
 
-
 def revision(raw):
     return hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
-
 
 def check_revision(raw):
     if request.form.get("revision") != revision(raw):
         raise ValueError("These settings changed after you opened this page. Review the latest version and try again.")
-
 
 def certificate_overview(hosts):
     """Summarise managed TLS files without failing the dashboard on one bad file."""
@@ -373,9 +345,11 @@ def certificate_overview(hosts):
             overview.append({"hostname": str(host.get("hostname", "")), "status": tls.certificate_status(path)})
     return overview
 
-
 @app.get("/")
 def dashboard():
+    period = request.args.get("period", "24h")
+    if period not in PERIODS:
+        abort(400)
     vpn = {}
     hosts = {}
     with b.LOCK:
@@ -422,8 +396,7 @@ def dashboard():
                            ready=all(check["ok"] for check in checks if check["required"]),
                            certificates=certificates,
                            expiring=sum(1 for item in certificates if item["status"] is None or item["status"]["days"] <= 30),
-                           events=activity.recent(8), samples=history(b.STATE, "24h"))
-
+                           events=activity.recent(8), samples=history(b.STATE, period), period=period, periods=PERIODS)
 
 @app.post("/services/restart")
 @action("dashboard")
@@ -439,7 +412,6 @@ def restart_service():
     if unit == b.ENDPOINT_UNIT:
         b.active_endpoint()
     return saved("dashboard", f"{SERVICE_UNITS[unit]} restarted.")
-
 
 @app.get("/clients")
 def index():
@@ -480,21 +452,13 @@ def index():
                            count=count, page=page, pages=pages, stats=stats, limit_fields=LIMIT_FIELDS,
                            metrics_unavailable=metrics_unavailable)
 
-
 @app.get("/monitoring")
 def monitoring():
-    period = request.args.get("period", "1h")
+    """Old links keep working; history and service state live on the dashboard."""
+    period = request.args.get("period", "24h")
     if period not in PERIODS:
         abort(400)
-    units = ["ttui.service", b.ENDPOINT_UNIT, b.ROUTER_UNIT] + (["caddy.service"] if acme.enabled() else [])
-    states = b.service_states(units)
-    services = {"ttui": states["ttui.service"], "TrustTunnel": states[b.ENDPOINT_UNIT],
-                "Xray routing": states[b.ROUTER_UNIT]}
-    if acme.enabled():
-        services["Caddy"] = states["caddy.service"]
-    return render_template("monitoring.html", period=period, periods=PERIODS, samples=history(b.STATE, period),
-                           services=services, uptime=host_metrics(b.STATE, sample_cpu=False)["uptime"])
-
+    return redirect(url_for("dashboard", period=period))
 
 @app.get("/logs")
 def logs():
@@ -523,13 +487,11 @@ def logs():
     return render_template("logs.html", filters=filters, sources=service_logs.SOURCES,
                            periods=PERIODS, rows=rows, error=error, follow=request.args.get("follow") == "1")
 
-
 @app.route("/diagnostics", methods=["GET", "POST"])
 @action("diagnostics")
 def diagnostics():
     rows = system_diagnostics.check() if request.method == "POST" else []
     return render_template("diagnostics.html", rows=rows)
-
 
 @app.route("/backups", methods=["GET", "POST"])
 @action("backups")
@@ -571,7 +533,6 @@ def backups():
     return render_template("backups.html", archives=snapshots.history(), components=snapshots.COMPONENTS,
                            schedule=snapshots.load_schedule(), intervals=snapshots.INTERVALS)
 
-
 @app.get("/backups/<name>")
 def download_backup(name):
     try:
@@ -579,7 +540,6 @@ def download_backup(name):
     except (ValueError, OSError):
         abort(404)
     return send_file(path, mimetype="application/zip", as_attachment=True, max_age=0)
-
 
 @app.route("/updates", methods=["GET", "POST"])
 @action("updates")
@@ -604,7 +564,6 @@ def updates():
     return render_template("updates.html", version=VERSION, release=release, update=updater.status(),
                            installed=updater.installed_components(VERSION), names=updater.COMPONENTS)
 
-
 @app.post("/clients")
 @action("index")
 def update_client():
@@ -625,7 +584,6 @@ def update_client():
     manager.save(before)
     return saved("index", "Clients updated.")
 
-
 @app.post("/export")
 @action("index")
 def export():
@@ -642,13 +600,11 @@ def export():
             pass
     return render_template("export.html", username=name, content=content, fmt=fmt, qr_svg=qr_svg)
 
-
 def routing_enabled():
     try:
         return b.load_routing().get("enabled", False)
     except OPERATION_ERRORS:
         return False
-
 
 def quick_setup_hostname():
     """Offer one-click setup when the panel is opened through a real DNS name."""
@@ -670,7 +626,6 @@ def quick_setup_hostname():
     except ValueError:
         return None
 
-
 def render_endpoint_page(preview=None, candidate=None, source=None, source_revision=None, save_error=None,
                          raw=None, vpn=None, hosts_raw=None, routing_raw=None):
     raw = b.read(b.VPN) if raw is None else raw
@@ -686,19 +641,16 @@ def render_endpoint_page(preview=None, candidate=None, source=None, source_revis
         form_schema=endpoint_form, routed=routing_enabled(), source=source,
         source_revision=source_revision or revision(source), launch=b.launch_options(), save_error=save_error)
 
-
 def render_setup_page():
     return render_template("endpoint.html", can_setup=True, setup_form=session.pop("setup_form", {}),
                            acme_enabled=acme.enabled(),
                            default_endpoint_port=8443 if PUBLIC_HTTPS else 443,
                            quick_hostname=quick_setup_hostname())
 
-
 @app.get("/server")
 def server():
     """Keep old links working; the TrustTunnel page is now /endpoint."""
     return endpoint()
-
 
 @app.route("/endpoint", methods=["GET", "POST"])
 @action("endpoint")
@@ -734,7 +686,6 @@ def endpoint():
                                          fromfile="Current", tofile="Proposed")),
             candidate=revision(candidate), raw=raw, vpn=vpn, hosts_raw=hosts_raw, routing_raw=routing_raw)
     return render_endpoint_page(raw=raw, vpn=vpn, hosts_raw=hosts_raw, routing_raw=routing_raw)
-
 
 @app.route("/filters", methods=["GET", "POST"])
 @action("filters")
@@ -784,7 +735,6 @@ def filters():
     return render_template("filters.html", rows=rows, filename=path.relative_to(b.CONFIG).as_posix(), enabled=enabled,
                            revision=revision(original), candidate=candidate_id, preview=preview)
 
-
 @app.post("/server")
 @action("endpoint")
 def save_server():
@@ -815,7 +765,6 @@ def save_server():
                                     save_error=str(error)), 400
     return saved("endpoint", "Configuration saved. TrustTunnel restarted.")
 
-
 @app.post("/launch")
 @action("endpoint")
 def save_launch():
@@ -824,7 +773,6 @@ def save_launch():
     b.endpoint_command(options)
     b.apply_endpoint({b.LAUNCH: json.dumps(options, indent=2) + "\n"}, read_vpn())
     return saved("endpoint", "Startup options saved.")
-
 
 @app.post("/setup")
 @action("endpoint")
@@ -883,7 +831,6 @@ def setup_endpoint():
     b.apply_endpoint(changes, vpn)
     return saved("index", "TrustTunnel is running. Open the first client's actions to export a connection.")
 
-
 @app.get("/tls")
 def tls_hosts():
     with b.LOCK:
@@ -904,7 +851,6 @@ def tls_hosts():
     return render_template("tls.html", hosts=hosts, host_types=HOST_TYPES, revision=revision(raw),
                            certificate_info=certificate_info, history=history, configured=configured,
                            acme_enabled=acme.enabled())
-
 
 @app.post("/tls")
 @action("tls_hosts")
@@ -977,7 +923,6 @@ def update_tls_host():
     b.apply_endpoint(changes, vpn)
     return saved("tls_hosts", "TLS hosts updated.")
 
-
 def render_routing(source, version, error=None):
     geofiles = []
     for path in sorted(b.GEO.glob("*.dat")):
@@ -989,7 +934,6 @@ def render_routing(source, version, error=None):
                            geofiles=geofiles,
                            router=b.service_state(b.ROUTER_UNIT))
 
-
 @app.get("/routing")
 @action("index")
 def routing():
@@ -997,7 +941,6 @@ def routing():
     version = revision(spec)
     spec.pop("_native_forward", None)
     return render_routing(json.dumps(spec, ensure_ascii=False, indent=2), version)
-
 
 @app.post("/routing")
 @action("routing")
@@ -1017,7 +960,6 @@ def save_routing():
     except OPERATION_ERRORS as error:
         return render_routing(source, request.form["revision"], str(error)), 400
     return saved("routing", "Routing settings saved.")
-
 
 @app.post("/geofiles")
 @action("routing")
@@ -1040,7 +982,6 @@ def upload_geo():
         upload.stream.seek(0)
     b.replace_geofile(upload.filename, upload.stream)
     return saved("routing", "Geodata file saved.")
-
 
 @app.post("/geofiles/verify")
 @action("routing")
@@ -1066,11 +1007,9 @@ def verify_geo():
         raise ValueError(f"{name}: SHA-256 checksum does not match.")
     return saved("routing", f"{name}: SHA-256 {actual}" + (" (verified)." if expected else "."))
 
-
 @app.get("/settings")
 def panel_settings():
     return render_template("settings.html", config=request_settings(), version=VERSION, https_required=PUBLIC_HTTPS)
-
 
 def clean_path(value):
     if value == "/":
@@ -1078,7 +1017,6 @@ def clean_path(value):
     if not re.fullmatch(r"(?:/[A-Za-z0-9_-]+)+", value):
         raise ValueError("The path must start with / and contain only letters A-Z, digits, underscores, hyphens, and slash separators.")
     return value
-
 
 @app.post("/settings")
 @action("panel_settings")
@@ -1115,7 +1053,6 @@ def save_settings():
     if changed_login or path != old_path:
         return redirect(path + "/login")
     return saved("panel_settings", "Panel settings saved.")
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -1189,7 +1126,6 @@ def main():
              "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto"}} if PUBLIC_HTTPS else {}
     serve(app, host=host, port=port,
           threads=8, max_request_body_size=app.config["MAX_CONTENT_LENGTH"], **proxy)
-
 
 if __name__ == "__main__":
     main()

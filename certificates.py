@@ -16,20 +16,17 @@ _status_lock = Lock()
 PEM_LIMIT = 512 * 1024
 DNS_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 
-
 def hostname(value):
     value = value.strip().lower()
     if len(value) > 253 or not re.fullmatch(rf"{DNS_LABEL}(?:\.{DNS_LABEL})*", value):
         raise ValueError("Enter a DNS hostname using ASCII letters, digits, and hyphens.")
     return value
 
-
 def path(value):
     result = (b.CONFIG / value).resolve()
     if not value or not result.is_file():
         raise ValueError("Provide readable certificate chain and private key files.")
     return result
-
 
 def inspect(certificate):
     output = b.command(["openssl", "x509", "-in", str(certificate), "-noout", "-enddate",
@@ -42,7 +39,6 @@ def inspect(certificate):
     days = (expiration - datetime.now(timezone.utc)).days
     return {"expires": expiration.isoformat(timespec="minutes"), "days": days, "fingerprint": fingerprint}
 
-
 def validate(certificate, key, host):
     public_cert = b.command(["openssl", "x509", "-in", str(certificate), "-noout", "-pubkey"], timeout=5)
     public_key = b.command(["openssl", "pkey", "-in", str(key), "-passin", "pass:", "-pubout"], timeout=5)
@@ -51,7 +47,6 @@ def validate(certificate, key, host):
     b.command(["openssl", "verify", "-purpose", "sslserver", "-partial_chain", "-trusted", str(certificate),
                "-verify_hostname", host, str(certificate)], timeout=5)
     return inspect(certificate)
-
 
 def uploaded_pair(cert_upload, key_upload, host):
     if not cert_upload or not key_upload:
@@ -68,10 +63,8 @@ def uploaded_pair(cert_upload, key_upload, host):
         details = validate(*files, host)
     return names, {b.CONFIG / name: data for name, data in zip(names.values(), payloads)}, details
 
-
 def existing_pair(cert, key, host):
     return validate(path(cert), path(key), host)
-
 
 def certificate_status(value):
     """Inspect a certificate once per file version; dashboards read it often."""

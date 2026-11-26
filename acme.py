@@ -11,14 +11,11 @@ import certificates as tls
 
 CHALLENGE_PREFIX = "/.well-known/acme-challenge/"
 
-
 def enabled():
     return os.environ.get("TTUI_ACME") == "1"
 
-
 def webroot():
     return b.STATE / "acme" / "webroot"
-
 
 def challenge(token):
     if not enabled() or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", token):
@@ -35,18 +32,15 @@ def challenge(token):
         return None
     return value if 0 < len(value) <= 4096 else None
 
-
 def certbot(*arguments, timeout):
     state = b.STATE / "acme"
     return b.command(["certbot", "--non-interactive", "--config-dir", str(state / "config"),
                       "--work-dir", str(state / "work"), "--logs-dir", str(state / "logs"),
                       *arguments], timeout=timeout)
 
-
 def live_pair(host):
     live = b.STATE / "acme" / "config" / "live" / host
     return {"cert_chain_path": str(live / "fullchain.pem"), "private_key_path": str(live / "privkey.pem")}
-
 
 def issue(host, email):
     if not enabled():
@@ -59,7 +53,6 @@ def issue(host, email):
             "--domain", host, "--email", email, "--agree-tos", "--keep-until-expiring", timeout=75)
     pair = live_pair(host)
     return pair, tls.existing_pair(*pair.values(), host)
-
 
 def renew():
     if not enabled() or not b.HOSTS.is_file():

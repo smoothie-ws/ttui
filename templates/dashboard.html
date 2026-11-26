@@ -51,7 +51,7 @@
       <dt>Free space for panel data</dt><dd>{{ '%.2f GiB'|format(metrics.disk / 1073741824) if metrics.disk is not none else 'Unavailable' }}</dd>
       <dt>Host uptime</dt><dd>{{ '%dd %dh %dm'|format(metrics.uptime // 86400, metrics.uptime // 3600 % 24, metrics.uptime // 60 % 60) if metrics.uptime is not none else 'Unavailable' }}</dd>
     </dl>
-    <div><a href="{{ url_for('monitoring') }}">Open monitoring history</a></div>
+    <div><a href="#traffic">Open resource history</a></div>
   </section>
   <section class="card stack">
     <h2>Connections</h2>
@@ -64,8 +64,12 @@
     <div><a href="{{ url_for('index') }}">Manage clients</a></div>
   </section>
 </div>
-<section class="card stack">
-  <div class="section-title"><h2>Traffic and load, last 24 hours</h2><a href="{{ url_for('monitoring', period='24h') }}">Details</a></div>
+<section class="card stack" id="traffic">
+  <div class="section-title"><h2>Traffic and load</h2>
+    <nav class="periods" aria-label="History range">
+      {% for item in periods %}<a href="{{ url_for('dashboard', period=item) }}" {% if item == period %}aria-current="page"{% endif %}>{{ item }}</a>{% endfor %}
+    </nav>
+  </div>
   {% if samples %}
   <div id="history-data" data-points="{{ samples|tojson|forceescape }}">
     <div class="grid">

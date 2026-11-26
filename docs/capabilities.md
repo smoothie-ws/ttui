@@ -113,7 +113,7 @@ Applying routing validates the compiled Xray configuration, writes `routing.json
 | TLS hosts | VPN, health check, speed test, and reverse proxy hosts. Add, edit, delete, upload PEM, validate hostname/key/expiry, view history. |
 | Panel certificates | Managed by Caddy for the panel hostname. Independent from endpoint TLS. |
 | Endpoint certificates | Existing files, uploaded PEM, self-signed, or Let's Encrypt through Certbot on managed Caddy installations. `ttui-acme.timer` renews and reloads a validated change. |
-| Monitoring | Host CPU, memory, disk, uptime, network rates, service states, and 1h/24h/7d/30d history in SQLite with 30-day retention. |
+| Monitoring | Dashboard shows host CPU, memory, disk, uptime, network rates, service states, and selectable 1h/24h/7d/30d history from SQLite with 30-day retention. |
 | Logs | Panel, Endpoint, Xray, cascade client, Caddy, ACME, backups, and updates. Search, level filter, time range, download, auto-refresh. |
 | Diagnostics | Services, listeners, binaries, configuration, TLS, DNS, disk space, permissions, and Xray validation with recommendations. |
 | Backups | Manual and scheduled ZIP archives with checksums, component selection, import, restore, integrity verification, and rollback on failed service start. |

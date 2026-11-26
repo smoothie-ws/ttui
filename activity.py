@@ -33,21 +33,17 @@ LABELS = {
     "save_settings": "Panel settings changed",
 }
 
-
 def path():
     return b.STATE / FILENAME
 
-
 def label(action):
     return LABELS.get(action, action.replace("_", " ").capitalize())
-
 
 def trim():
     """Keep the newest entries and bound the file even after a long deployment."""
     source = path()
     lines = source.read_text(encoding="utf-8", errors="replace").splitlines()[-LIMIT:]
     b.atomic(source, "\n".join(lines) + ("\n" if lines else ""))
-
 
 def record(action, result="completed", address=None):
     """Append one event. Auditing must never make the requested action fail."""
@@ -68,7 +64,6 @@ def record(action, result="completed", address=None):
                 trim()
     except OSError:
         pass
-
 
 def recent(limit=8):
     """Return the newest events first, ignoring incomplete lines."""

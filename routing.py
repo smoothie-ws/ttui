@@ -17,7 +17,6 @@ FIRST_CASCADE_PORT = 19100
 DEFAULT_ROUTING = {"enabled": False, "domainStrategy": "IPIfNonMatch",
                    "default": "direct", "outbounds": [], "rules": []}
 
-
 def compile_routing(spec):
     if not isinstance(spec, dict) or type(spec.get("enabled")) is not bool:
         raise ValueError("Set enabled to true or false in the routing configuration.")
@@ -100,10 +99,8 @@ def compile_routing(spec):
         "routing": {"domainStrategy": strategy, "rules": rules},
     }, cascades
 
-
 def xray_env(assets):
     return {**os.environ, "XRAY_LOCATION_ASSET": str(assets)}
-
 
 def wait_listener(port, process, timeout=12):
     deadline = time.monotonic() + timeout
@@ -114,7 +111,6 @@ def wait_listener(port, process, timeout=12):
         except OSError:
             time.sleep(0.15)
     raise RuntimeError(f"The local SOCKS5 listener on port {port} failed to start.")
-
 
 def run_router(state, xray, client_binary):
     spec = json.loads((state / "routing.json").read_text(encoding="utf-8"))
@@ -163,7 +159,6 @@ def run_router(state, xray, client_binary):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-
 
 if __name__ == "__main__":
     run_router(Path(sys.argv[1]).resolve(), *sys.argv[2:])

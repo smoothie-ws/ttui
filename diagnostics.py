@@ -14,7 +14,6 @@ from routing import compile_routing
 
 ERRORS = (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, tomlkit.exceptions.ParseError)
 
-
 def port_available(listener):
     if not isinstance(listener, str):
         raise ValueError("Enter a valid IP address and port in Server settings.")
@@ -24,24 +23,20 @@ def port_available(listener):
     with socket.create_connection((host, int(port)), timeout=2):
         return f"Accepting connections on {listener}."
 
-
 def readable(path):
     if not path.is_file() or not os.access(path, os.R_OK):
         raise ValueError(f"Check permissions or restore {path}.")
     return f"Readable by the panel service: {path}."
-
 
 def executable(path):
     if shutil.which(str(path)) is None:
         raise ValueError(f"Restore the installed executable at {path}.")
     return f"Available: {path}."
 
-
 def running(unit):
     if b.service_state(unit) != "active":
         raise ValueError("Service is stopped or unavailable. See Logs for details.")
     return "Service is running."
-
 
 def check():
     rows = []
@@ -117,7 +112,6 @@ def check():
     else:
         rows.append(("Skipped", "Routing service", "Routing is disabled."))
     return rows
-
 
 def dns(name):
     host = tls.hostname(name)

@@ -28,7 +28,6 @@ STATUS_CODES = (407, 405, 404, 403)
 HEX_BYTES = r"(?:[a-fA-F0-9]{2})+"
 FILTER_FIELDS = ("cidr", "client_random_prefix", "client_random_auth_key", "action")
 
-
 class Field(NamedTuple):
     key: str
     label: str
@@ -36,7 +35,6 @@ class Field(NamedTuple):
     kind: str = "text"
     minimum: int = 0
     maximum: int = U32
-
 
 CORE = (
     Field("ping_path", "Health check path", "/ping"),
@@ -99,11 +97,9 @@ FORWARD_FIELDS = (Field("address", "SOCKS5 IP address and port"),
                   Field("extended_auth", "Extended SOCKS5 authentication", False, "bool"))
 ALIASES = {field.key: field.key.removeprefix("initial_") for field in PROTOCOL_FIELDS["quic"][3:8]}
 
-
 def native_key(table, prefix, key):
     alias = ALIASES.get(key) if prefix == "quic." else None
     return alias if key not in table and alias is not None and alias in table else key
-
 
 def read_fields(table, prefix, fields):
     result = {}
@@ -111,7 +107,6 @@ def read_fields(table, prefix, fields):
         value = table.get(native_key(table, prefix, field.key), field.default)
         result[prefix + field.key] = "\n".join(value) if field.kind == "list" else value
     return result
-
 
 def write_fields(table, prefix, fields, form):
     for field in fields:
@@ -140,7 +135,6 @@ def write_fields(table, prefix, fields, form):
         if key in table or value != field.default:
             table[key] = value
 
-
 def host_port(value, label, allow_name=False):
     host, sep, port = value.rpartition(":")
     if not sep or not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= 65535:
@@ -153,7 +147,6 @@ def host_port(value, label, allow_name=False):
         raise ValueError(f"Enter a valid IP address for {label.lower()}.") from error
     if (ip.version == 6) != host.startswith("["):
         raise ValueError(f"Use brackets only around IPv6 addresses for {label.lower()}.")
-
 
 def validate(vpn, hosts):
     ping, speedtest = vpn.get("ping_path", "/ping"), vpn.get("speedtest_path", "/speedtest")
@@ -186,13 +179,11 @@ def validate(vpn, hosts):
         if prefix and not re.fullmatch(rf"{HEX_BYTES}(?:/{HEX_BYTES})?", prefix):
             raise ValueError("Enter the TLS random prefix and optional mask as whole hexadecimal bytes.")
 
-
 def filter_rows(document):
     entries = document.get("rule", [])
     if not isinstance(entries, list) or any(not isinstance(rule, dict) for rule in entries):
         raise ValueError("Connection filters must use separate [[rule]] tables.")
     return [(str(index), rule) for index, rule in enumerate(entries)]
-
 
 def update_filters(document, form):
     previous = dict(filter_rows(document))
@@ -225,7 +216,6 @@ def update_filters(document, form):
         document["rule"] = rules
     return rows
 
-
 def values(vpn):
     bind, port = vpn.get("listen_address", "0.0.0.0:443").rsplit(":", 1)
     result = {"bind": bind.strip("[]"), "port": port}
@@ -245,7 +235,6 @@ def values(vpn):
     result["forward"] = "socks5" if "socks5" in forward else "direct"
     result.update(read_fields(forward.get("socks5", {}), "socks5.", FORWARD_FIELDS))
     return result
-
 
 def update(vpn, form, reserved_ports=(), routed=False):
     address = ip_address(form["bind"].strip())

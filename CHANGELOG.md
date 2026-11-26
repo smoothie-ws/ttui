@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.4.1
+
+- Fold monitoring history into the dashboard with selectable 1h/24h/7d/30d ranges and remove the duplicate Monitoring page.
+- Compact production sources and unused styles without changing behaviour.
+- Keep `/monitoring` as a redirect so old links open the dashboard history.
+
 ## 0.4.0
 
 - Merge the separate Server and Endpoint pages into one TrustTunnel page with setup, tabs, advanced TOML, connection filters, and startup options in one place.

@@ -37,14 +37,12 @@ HOST_GROUPS = ("main_hosts", "ping_hosts", "speedtest_hosts", "reverse_proxy_hos
 INTERVALS = {"off": ("Off", 0), "daily": ("Daily", 1), "weekly": ("Weekly", 7)}
 SCHEDULED_RETENTION = 7
 
-
 def location():
     root = b.STATE / "backups"
     root.mkdir(mode=0o700, exist_ok=True)
     if root.is_symlink() or (os.name == "posix" and stat.S_IMODE(root.stat().st_mode) & 0o077):
         raise ValueError("The backup directory must be a local directory with private permissions (0700).")
     return root
-
 
 def archive_path(name):
     if not NAME.fullmatch(name):
@@ -53,7 +51,6 @@ def archive_path(name):
     if path.is_symlink() or not path.is_file():
         raise ValueError("Backup is unavailable.")
     return path
-
 
 def sources(selected):
     files = {}
@@ -95,7 +92,6 @@ def sources(selected):
                 include(path, b.STATE, "state")
     return files
 
-
 def host_files(hosts):
     for group in HOST_GROUPS:
         entries = hosts.get(group, [])
@@ -107,11 +103,9 @@ def host_files(hosts):
                 raise ValueError("TLS certificates and keys must use file paths.")
             yield host.get("hostname", ""), [(b.CONFIG / value).resolve() for value in values if value]
 
-
 def archive_name(now, scheduled=False):
     suffix = "-auto" if scheduled else ""
     return f"ttui-{now:%Y%m%dT%H%M%SZ}-{secrets.token_hex(6)}{suffix}.zip"
-
 
 def digest(stream, destination=None, allowance=MAX_BYTES):
     checksum = hashlib.sha256()
@@ -125,13 +119,11 @@ def digest(stream, destination=None, allowance=MAX_BYTES):
             destination.write(block)
     return {"size": size, "sha256": checksum.hexdigest()}
 
-
 def selection(selected):
     selected = set(selected)
     if not selected or selected - COMPONENTS.keys():
         raise ValueError("Select at least one valid backup component.")
     return selected
-
 
 def create(selected, version, reason="manual"):
     selected = selection(selected)
@@ -212,7 +204,6 @@ def create(selected, version, reason="manual"):
             temporary.unlink(missing_ok=True)
     return name
 
-
 def read_manifest(archive):
     entries = archive.infolist()
     if len(entries) > MAX_FILES + 1 or archive.getinfo(MANIFEST).file_size > MAX_MANIFEST:
@@ -245,7 +236,6 @@ def read_manifest(archive):
         raise ValueError("Backup exceeds the supported size.")
     return data
 
-
 def verify_file(path, stage=None):
     staged = {}
     try:
@@ -276,7 +266,6 @@ def verify_file(path, stage=None):
     except (BadZipFile, CompressionError, KeyError, UnicodeError, NotImplementedError) as error:
         raise ValueError("The backup archive is damaged or unsupported.") from error
     return manifest, staged
-
 
 def validate_certbot_archive(path):
     try:
@@ -334,7 +323,6 @@ def validate_certbot_archive(path):
     except (tarfile.TarError, OSError, EOFError, CompressionError) as error:
         raise ValueError("The Certbot archive is damaged.") from error
 
-
 def unpack_certbot(path, directory):
     """Extract only previously validated regular files, directories and links."""
     validate_certbot_archive(path)
@@ -355,7 +343,6 @@ def unpack_certbot(path, directory):
                 target = directory / member.name
                 target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 target.symlink_to(member.linkname)
-
 
 @contextmanager
 def restore_certbot(archive):
@@ -408,10 +395,8 @@ def restore_certbot(archive):
         if success or not previous.exists():
             shutil.rmtree(root)
 
-
 def verify(name):
     verify_file(archive_path(name))
-
 
 def import_archive(stream):
     root = location()
@@ -428,7 +413,6 @@ def import_archive(stream):
             temporary.unlink(missing_ok=True)
     return name
 
-
 def destinations(staged):
     changes = {}
     for name, source in staged.items():
@@ -439,7 +423,6 @@ def destinations(staged):
             raise ValueError("A backup destination is duplicated or passes through a symbolic link.")
         changes[target] = source
     return changes
-
 
 def validate_restore(changes, components, current, client_address=None):
     def read(path, default=""):
@@ -534,14 +517,12 @@ def validate_restore(changes, components, current, client_address=None):
         raise ValueError("The Endpoint expects ttui routing. Restore the matching routing snapshot.")
     return new_path, endpoint_changed, routing_changed, config if spec["enabled"] else None
 
-
 def restore(name, current, client_address=None):
     with TemporaryDirectory(dir=location(), prefix=".restore-") as directory:
         manifest, staged = verify_file(archive_path(name), Path(directory))
         certbot = staged.pop("state/certbot-config.tar.gz", None)
         with restore_certbot(certbot) as rollback_certbot:
             return restore_staged(manifest, staged, current, client_address, rollback_certbot)
-
 
 def restore_staged(manifest, staged, current, client_address, rollback_certbot):
     changes = destinations(staged)
@@ -586,7 +567,6 @@ def restore_staged(manifest, staged, current, client_address, rollback_certbot):
     b.change_files(changes, apply, recover)
     return path
 
-
 def history():
     rows = []
     for path in sorted(location().glob("ttui-*.zip"), reverse=True):
@@ -599,7 +579,6 @@ def history():
             data = None
         rows.append((path.name, data))
     return rows
-
 
 def load_schedule():
     default = {"interval": "off", "components": list(COMPONENTS), "next": None}
@@ -616,7 +595,6 @@ def load_schedule():
         default["error"] = "The backup schedule is invalid. Save a new schedule to resume automatic backups."
     return default
 
-
 def schedule(interval, components, now=None):
     if interval not in INTERVALS:
         raise ValueError("Select a supported backup interval.")
@@ -625,7 +603,6 @@ def schedule(interval, components, now=None):
     now = datetime.now(timezone.utc) if now is None else now
     due = (now + timedelta(days=days)).isoformat(timespec="seconds") if days else None
     b.write_json(b.STATE / "backup-schedule.json", {"interval": interval, "components": selected, "next": due})
-
 
 def run_scheduled(version, now=None):
     config = load_schedule()

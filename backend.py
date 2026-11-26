@@ -33,7 +33,6 @@ GEOFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.dat")
 ENDPOINT_UNIT, ROUTER_UNIT = "trusttunnel.service", "ttui-router.service"
 SYSTEMCTL = os.environ.get("TTUI_SYSTEMCTL", "/usr/bin/systemctl")
 
-
 @contextmanager
 def configuration_change():
     with LOCK:
@@ -44,7 +43,6 @@ def configuration_change():
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 yield
 
-
 def read(path, default=None):
     try:
         return path.read_text(encoding="utf-8")
@@ -52,7 +50,6 @@ def read(path, default=None):
         if default is None:
             raise
         return default
-
 
 def atomic(path, data):
     if isinstance(data, str):
@@ -70,10 +67,8 @@ def atomic(path, data):
             file.close()
             temporary.unlink(missing_ok=True)
 
-
 def write_json(path, value):
     atomic(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
-
 
 def command(args, **kwargs):
     result = subprocess.run(args, text=True, encoding="utf-8", errors="replace",
@@ -83,17 +78,14 @@ def command(args, **kwargs):
         raise RuntimeError(message[-2500:] or f"Command exited with code {result.returncode}.")
     return result.stdout
 
-
 def service(action, unit):
     command(["/usr/bin/sudo", "-n", SYSTEMCTL, action, unit], timeout=90)
-
 
 def service_state(unit):
     try:
         return command([SYSTEMCTL, "is-active", unit], timeout=3).strip()
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         return "inactive"
-
 
 def service_states(units):
     """Query several units in one systemctl call, falling back to separate calls."""
@@ -108,7 +100,6 @@ def service_states(units):
         pass
     return {unit: service_state(unit) for unit in units}
 
-
 def active_endpoint():
     args = [SYSTEMCTL, "show", "-p", "MainPID", "-p", "ActiveState", ENDPOINT_UNIT]
     initial = set(command(args, timeout=3).splitlines())
@@ -118,7 +109,6 @@ def active_endpoint():
             return
     raise RuntimeError("TrustTunnel exited during startup. Check journalctl -u trusttunnel.")
 
-
 def managed_path(value, fallback):
     if not isinstance(value if value is not None else fallback, str):
         raise ValueError("The configuration path must be a string.")
@@ -127,14 +117,12 @@ def managed_path(value, fallback):
         raise ValueError("Client credentials and connection filter files must be inside the TrustTunnel configuration directory.")
     return path
 
-
 def related(vpn):
     credentials = managed_path(vpn.get("credentials_file"), "credentials.toml")
     rules = managed_path(vpn.get("rules_file"), "rules.toml")
     if credentials == rules:
         raise ValueError("Client credentials and connection filters must use separate files.")
     return credentials, rules
-
 
 def clients(document):
     entries = document.get("client", [])
@@ -150,7 +138,6 @@ def clients(document):
         names.add(entry["username"])
     return entries
 
-
 def loopback(vpn):
     try:
         host, port = vpn.get("listen_address", "").rsplit(":", 1)
@@ -158,25 +145,20 @@ def loopback(vpn):
     except (AttributeError, ValueError):
         return False
 
-
 def configured_clients(vpn, raw=None):
     if not vpn.get("credentials_file"):
         return []
     return clients(tomlkit.parse(read(related(vpn)[0], "") if raw is None else raw))
 
-
 def check_clients(vpn, raw=None):
     if not configured_clients(vpn, raw) and not loopback(vpn):
         raise ValueError("An endpoint listening outside loopback requires credentials_file and at least one client.")
 
-
 def load_routing():
     return json.loads(read(ROUTING, json.dumps(DEFAULT_ROUTING)))
 
-
 def launch_options():
     return json.loads(read(LAUNCH, "{}"))
-
 
 def endpoint_command(options):
     command_line = [ENDPOINT, str(VPN), str(HOSTS)]
@@ -193,13 +175,11 @@ def endpoint_command(options):
             command_line.append(f"--{key}={value}")
     return command_line
 
-
 def validate_xray(config):
     with tempfile.TemporaryDirectory(dir=STATE) as directory:
         path = Path(directory) / "xray.json"
         path.write_text(json.dumps(config), encoding="utf-8")
         command([XRAY, "run", "-test", "-c", str(path)], env=xray_env(GEO))
-
 
 def change_files(changes, apply, recover):
     with ExitStack() as stack:
@@ -242,7 +222,6 @@ def change_files(changes, apply, recover):
                 raise RuntimeError(f"{error}\nRecovery failed: {'; '.join(failures)}") from error
             raise
 
-
 def apply_endpoint(changes, vpn):
     credentials, rules = related(vpn)
     check_clients(vpn, changes.get(credentials))
@@ -259,7 +238,6 @@ def apply_endpoint(changes, vpn):
         active_endpoint()
 
     change_files(changes, restart, restart if was_active else lambda: service("stop", ENDPOINT_UNIT))
-
 
 def apply_routing(spec):
     config, _ = compile_routing(spec)
@@ -318,7 +296,6 @@ def apply_routing(spec):
 
     change_files(changes, apply, recover)
 
-
 def replace_geofile(filename, data):
     spec = load_routing()
     config = compile_routing(spec)[0] if spec["enabled"] else None
@@ -338,7 +315,6 @@ def replace_geofile(filename, data):
             service("restart", ROUTER_UNIT)
 
     change_files({GEO / filename: data}, apply, recover)
-
 
 def export_client(name, form):
     fmt = form.get("format", "deeplink")
