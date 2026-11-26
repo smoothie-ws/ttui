@@ -30,12 +30,14 @@ snapshot() {
         /etc/systemd/system/ttui.service
 }
 install_panel
-grep -Eq '^Sign-in URL: http://[0-9a-fA-F.:]+:8080/ttui/$' "$work/install.log"
-grep -Fq 'ttui web panel sign-in' "$work/install.log"
+grep -Fq 'No domain given: installing the panel on port 8080 over HTTP.' "$work/install.log"
+grep -Eq '^ Open in a browser:  http://[0-9a-fA-F.:]+:8080/ttui/$' "$work/install.log"
 grep -Eq '^TTUI_BIND=0\.0\.0\.0$' /etc/default/ttui
+sudo test -s /root/ttui-signin.txt
+sudo cat /root/ttui-signin.txt >"$work/signin.txt"
 grep -q '^Administrator username: admin$' "$work/install.log"
-grep -Eq '^ttui /ttui \| admin \| [A-Za-z0-9_-]+$' "$work/install.log"
-grep -Fq 'Sign in and open TrustTunnel to create the VPN node' "$work/install.log"
+grep -Eq '^ttui /ttui \| admin \| [A-Za-z0-9_-]+$' "$work/signin.txt"
+grep -Fq 'Open TCP 8080 in the cloud/host firewall' "$work/install.log"
 smoke
 for config in vpn hosts credentials; do
     sudo test ! -e "/etc/trusttunnel/$config.toml"
@@ -51,7 +53,7 @@ sudo -u ttui sudo -n /usr/bin/journalctl --no-pager --output=json --lines=500 --
 sudo -u ttui mkdir -p /var/lib/ttui/acme/config/{archive,live}/smoke.example
 printf 'archived certificate\n' | sudo -u ttui tee /var/lib/ttui/acme/config/archive/smoke.example/fullchain1.pem >/dev/null
 sudo -u ttui ln -s ../../archive/smoke.example/fullchain1.pem /var/lib/ttui/acme/config/live/smoke.example/fullchain.pem
-python3 - "$work/install.log" <<'PY'
+python3 - "$work/install.log" "$work/signin.txt" <<'PY'
 import base64
 import hashlib
 import html
@@ -73,7 +75,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
-password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[1]).read_text(), re.M)[1]
+password = re.search(r"^ttui /ttui \| admin \| (\S+)$", Path(sys.argv[2]).read_text(), re.M)[1]
 cookies = CookieJar()
 client = build_opener(HTTPCookieProcessor(cookies))
 base = "http://127.0.0.1:8080/ttui"
