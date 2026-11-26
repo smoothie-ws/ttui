@@ -1,6 +1,6 @@
 {% if acme_enabled %}
 {% set setup = setup_form|default({}) %}
-<details {% if setup.get('acme_email') %}open{% endif %}>
+<details class="flat" {% if setup.get('acme_email') %}open{% endif %}>
   <summary>Issue and renew with Let's Encrypt</summary>
   <div class="details-body stack">
     <p class="subtle">Point the VPN hostname to this server and allow public HTTP on TCP port 80. Leave the email blank to use a PEM pair instead.</p>

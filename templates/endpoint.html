@@ -28,7 +28,7 @@
 {% endmacro %}
 {% if can_setup %}
 {{ heading('TrustTunnel', 'Create the VPN node in one step, or use custom certificate settings.') }}
-<section class="card stack">
+<section class="section stack">
   <h2>Set up TrustTunnel</h2>
   {% if quick_hostname %}
   <p class="subtle">Recommended: the hostname you opened already points here. ttui creates a self-signed certificate, the first client <code>default</code>, and enables HTTP/3.</p>
@@ -53,7 +53,7 @@
       <label>First client username <input name="username" maxlength="64" required placeholder="laptop" value="{{ setup_form.get('username', '') }}"></label>
     </div>
     <label class="check"><input type="checkbox" name="quic" {% if setup_form.get('quic') %}checked{% endif %}> Enable HTTP/3 (QUIC)</label>
-    <details {% if setup_form.get('cert_chain_path') or setup_form.get('private_key_path') %}open{% endif %}>
+    <details class="flat" {% if setup_form.get('cert_chain_path') or setup_form.get('private_key_path') %}open{% endif %}>
       <summary>Use an existing TLS certificate</summary>
       <div class="details-body grid">
         <label>Certificate chain <input name="cert_chain_path" placeholder="certs/fullchain.pem" value="{{ setup_form.get('cert_chain_path', '') }}"></label>
@@ -67,147 +67,168 @@
 </section>
 {% else %}
 {{ heading('TrustTunnel', 'Configure listeners, connection handling, and endpoint services.') }}
-<form class="stack" method="post">
-  {{ token() }}
-  <input type="hidden" name="revision" value="{{ revision }}">
-  <input type="hidden" name="candidate" value="{{ candidate }}">
-  <nav class="tabs" role="tablist" aria-label="TrustTunnel sections" data-tabs data-open-tab="{{ 'advanced' if preview is not none else '' }}">
-    <button type="button" role="tab" data-tab="general" aria-selected="true">General</button>
-    <button type="button" role="tab" data-tab="protocols" aria-selected="false">Protocols</button>
-    <button type="button" role="tab" data-tab="network" aria-selected="false">Network</button>
-    <button type="button" role="tab" data-tab="advanced" aria-selected="false">Services &amp; advanced</button>
-  </nav>
-  <div class="stack" data-tab-panel="general">
-    <section class="card stack">
-      <h2>Listener</h2>
-      <p class="subtle">Address VPN clients connect to. Open this TCP port; add the same UDP port for HTTP/3.</p>
-      <div class="grid">
-        <label>Listen IP address <input name="bind" value="{{ values.bind }}" required><small class="subtle">Use 0.0.0.0 for every IPv4 interface, :: for IPv6, or a specific address.</small></label>
-        <label>Listen port <input type="number" name="port" min="1" max="65535" value="{{ values.port }}" required><small class="subtle">Ports 80 and 443 are reserved while the panel uses managed HTTPS.</small></label>
+<section class="section">
+  <div class="section-head"><h2>Endpoint settings</h2></div>
+  <form method="post" data-tabs-scope>
+    {{ token() }}
+    <input type="hidden" name="revision" value="{{ revision }}">
+    <input type="hidden" name="candidate" value="{{ candidate }}">
+    <nav class="tabs" role="tablist" aria-label="TrustTunnel sections" data-tabs data-open-tab="{{ 'advanced' if preview is not none else '' }}">
+      <button type="button" role="tab" data-tab="general" aria-selected="true">General</button>
+      <button type="button" role="tab" data-tab="protocols" aria-selected="false">Protocols</button>
+      <button type="button" role="tab" data-tab="network" aria-selected="false">Network</button>
+      <button type="button" role="tab" data-tab="advanced" aria-selected="false">Services &amp; advanced</button>
+    </nav>
+    <div class="stack" data-tab-panel="general">
+      <div class="section-body">
+        <h3>Listener</h3>
+        <p class="subtle">Address VPN clients connect to. Open this TCP port; add the same UDP port for HTTP/3.</p>
+        <div class="grid">
+          <label>Listen IP address <input name="bind" value="{{ values.bind }}" required><small class="subtle">Use 0.0.0.0 for every IPv4 interface, :: for IPv6, or a specific address.</small></label>
+          <label>Listen port <input type="number" name="port" min="1" max="65535" value="{{ values.port }}" required><small class="subtle">Ports 80 and 443 are reserved while the panel uses managed HTTPS.</small></label>
+        </div>
       </div>
-    </section>
-    {% for title, items in groups.items() if title == 'General' %}
-    <section class="card stack">
-      <h2>{{ title }}</h2>
-      <p class="subtle">Control reachable destinations and the optional health and speed test paths.</p>
-      <div class="grid">
-      {% for key, label, default in items %}
-        <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> {{ label }}</label>
-      {% endfor %}
-      </div>
-    </section>
-    {% endfor %}
-  </div>
-  <div class="stack" data-tab-panel="protocols">
-    <section class="card stack">
-      <h2>Transport protocols</h2>
-      <p class="subtle">Enable at least one. HTTP/3 uses UDP; metrics needs HTTP/1.1.</p>
-      {% for key, label in protocols.items() %}
-      <div class="stack">
-        <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> Enable {{ label }}</label>
-        <details><summary>{{ label }} settings</summary><div class="details-body">{{ fields(form_schema.PROTOCOL_FIELDS[key], key ~ '.') }}</div></details>
+      {% for title, items in groups.items() if title == 'General' %}
+      <div class="section-body separate">
+        <h3>{{ title }}</h3>
+        <p class="subtle">Control reachable destinations and the optional health and speed test paths.</p>
+        <div class="grid">
+        {% for key, label, default in items %}
+          <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> {{ label }}</label>
+        {% endfor %}
+        </div>
       </div>
       {% endfor %}
-    </section>
-  </div>
-  <div class="stack" data-tab-panel="network">
-    {% for title, items in groups.items() if title == 'Timeouts (seconds)' %}
-    <section class="card stack">
-      <h2>{{ title }}</h2>
-      <p class="subtle">Shorter values free resources; longer values tolerate slow networks.</p>
-      <div class="grid">
-      {% for key, label, default in items %}
-        <label>{{ label }} <input type="number" name="{{ key }}" min="1" max="4294967295" value="{{ values[key] }}" required></label>
-      {% endfor %}
-      </div>
-    </section>
-    {% endfor %}
-    <section class="card stack">
-      <h2>Connection limits, authentication, and files</h2>
-      <p class="subtle">Blank limits are unlimited. Keep CONNECT status 407 for browser sign-in. Paths stay inside the TrustTunnel configuration directory.</p>
-      {{ fields(form_schema.CORE) }}
-    </section>
-    <details class="card">
-      <summary>Native outbound</summary>
-      <div class="details-body stack">
-        {% if routed %}
-        <p>The endpoint currently forwards through <a href="{{ url_for('routing') }}">Xray routing</a>.</p>
-        {% else %}
-        <p class="subtle">Direct is the normal choice. SOCKS5 forwards all endpoint traffic through another proxy.</p>
-        <label>Forwarding mode <select name="forward">
-          <option value="direct">Direct</option><option value="socks5" {% if values.forward == 'socks5' %} selected{% endif %}>SOCKS5</option>
-        </select></label>
-        {{ fields(form_schema.FORWARD_FIELDS, 'socks5.') }}
-        {% endif %}
-      </div>
-    </details>
-  </div>
-  <div class="stack" data-tab-panel="advanced">
-    <div class="actions">
-      <a class="button" href="{{ url_for('filters') }}">Connection filters</a>
-      <a class="button" href="{{ url_for('tls_hosts') }}">Manage TLS hosts</a>
-      <a class="button" href="#advanced-config">Advanced TOML</a>
     </div>
-    {% for key, (label, items) in form_schema.OPTIONAL.items() %}
-    <details class="card" {% if values[key] != 'off' %}open{% endif %}>
-      <summary>{{ label }}</summary>
-      <div class="details-body stack">
-        <label>{{ label }} mode <select name="{{ key }}">
-          <option value="off">Not configured</option>
-          {% if key == 'subscription' %}<option value="disabled" {% if values[key] == 'disabled' %} selected{% endif %}>Configured and disabled</option>{% endif %}
-          <option value="on" {% if values[key] == 'on' %} selected{% endif %}>Enabled</option>
-        </select></label>
-        {% if key == 'metrics' %}<p class="subtle">Requires HTTP/1.1. Keep metrics on loopback unless the network is protected.</p>{% endif %}
-        {% if key == 'subscription' %}<p class="subtle">The hostname must match a VPN TLS host; the path must not overlap other endpoint paths.</p>{% endif %}
-        {{ fields(items, key ~ '.') }}
+    <div class="stack" data-tab-panel="protocols">
+      <div class="section-body">
+        <h3>Transport protocols</h3>
+        <p class="subtle">Enable at least one. HTTP/3 uses UDP; metrics needs HTTP/1.1.</p>
+        {% for key, label in protocols.items() %}
+        <div class="stack separate">
+          <label class="check"><input type="checkbox" name="{{ key }}" {% if values[key] %}checked{% endif %}> Enable {{ label }}</label>
+          <details class="flat"><summary>{{ label }} settings</summary><div class="details-body">{{ fields(form_schema.PROTOCOL_FIELDS[key], key ~ '.') }}</div></details>
+        </div>
+        {% endfor %}
       </div>
-    </details>
-    {% endfor %}
-    {% if preview is not none %}
-    <section class="card stack">
-      <h2>Proposed changes</h2>
-      {% if preview %}<textarea class="code" rows="12" readonly aria-label="Configuration diff">{{ preview }}</textarea>{% else %}<p>No changes.</p>{% endif %}
-    </section>
-    {% endif %}
-  </div>
-  <div class="actions tab-actions">
-    <button name="operation" value="preview">Preview changes</button>
-    {% if preview %}<button class="primary" name="operation" value="apply">Apply and restart</button>{% endif %}
-  </div>
-</form>
-<details class="card" id="advanced-config" {% if save_error %}open{% endif %}>
-  <summary>Advanced TOML editor</summary>
+    </div>
+    <div class="stack" data-tab-panel="network">
+      {% for title, items in groups.items() if title == 'Timeouts (seconds)' %}
+      <div class="section-body">
+        <h3>{{ title }}</h3>
+        <p class="subtle">Shorter values free resources; longer values tolerate slow networks.</p>
+        <div class="grid">
+        {% for key, label, default in items %}
+          <label>{{ label }} <input type="number" name="{{ key }}" min="1" max="4294967295" value="{{ values[key] }}" required></label>
+        {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+      <div class="section-body separate">
+        <h3>Connection limits, authentication, and files</h3>
+        <p class="subtle">Blank limits are unlimited. Keep CONNECT status 407 for browser sign-in. Paths stay inside the TrustTunnel configuration directory.</p>
+        {{ fields(form_schema.CORE) }}
+      </div>
+      <details class="flat separate">
+        <summary>Native outbound</summary>
+        <div class="details-body stack">
+          {% if routed %}
+          <p>The endpoint currently forwards through <a href="{{ url_for('routing') }}">Xray routing</a>.</p>
+          {% else %}
+          <p class="subtle">Direct is the normal choice. SOCKS5 forwards all endpoint traffic through another proxy.</p>
+          <label>Forwarding mode <select name="forward">
+            <option value="direct">Direct</option><option value="socks5" {% if values.forward == 'socks5' %} selected{% endif %}>SOCKS5</option>
+          </select></label>
+          {{ fields(form_schema.FORWARD_FIELDS, 'socks5.') }}
+          {% endif %}
+        </div>
+      </details>
+    </div>
+    <div class="stack" data-tab-panel="advanced">
+      <div class="actions">
+        <a class="button" href="{{ url_for('filters') }}">Connection filters</a>
+        <a class="button" href="{{ url_for('tls_hosts') }}">Manage TLS hosts</a>
+        <a class="button" href="#advanced-config">Advanced TOML</a>
+      </div>
+      {% for key, (label, items) in form_schema.OPTIONAL.items() %}
+      <details class="flat" {% if values[key] != 'off' %}open{% endif %}>
+        <summary>{{ label }}</summary>
+        <div class="details-body stack">
+          <label>{{ label }} mode <select name="{{ key }}">
+            <option value="off">Not configured</option>
+            {% if key == 'subscription' %}<option value="disabled" {% if values[key] == 'disabled' %} selected{% endif %}>Configured and disabled</option>{% endif %}
+            <option value="on" {% if values[key] == 'on' %} selected{% endif %}>Enabled</option>
+          </select></label>
+          {% if key == 'metrics' %}<p class="subtle">Requires HTTP/1.1. Keep metrics on loopback unless the network is protected.</p>{% endif %}
+          {% if key == 'subscription' %}<p class="subtle">The hostname must match a VPN TLS host; the path must not overlap other endpoint paths.</p>{% endif %}
+          {{ fields(items, key ~ '.') }}
+        </div>
+      </details>
+      {% endfor %}
+      {% if preview is not none %}
+      <div class="section-body separate">
+        <h3>Proposed changes</h3>
+        {% if preview %}<textarea class="code" rows="12" readonly aria-label="Configuration diff">{{ preview }}</textarea>{% else %}<p>No changes.</p>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="tab-actions">
+      <button name="operation" value="preview">Preview changes</button>
+      {% if preview %}<button class="primary" name="operation" value="apply">Apply and restart</button>{% endif %}
+      <span class="subtle">Applying restarts TrustTunnel.</span>
+    </div>
+  </form>
+</section>
+<section class="section" id="advanced-config">
+  <div class="section-head"><h2>Configuration files</h2></div>
   {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
   {% if routed %}<p class="subtle">While routing is enabled, the panel points forward_protocol at the local Xray instance.</p>{% endif %}
-  <form class="details-body stack" method="post" action="{{ url_for('save_server') }}" data-confirm="Apply the configuration and restart TrustTunnel?">
+  <form method="post" action="{{ url_for('save_server') }}" data-confirm="Apply the configuration and restart TrustTunnel?" data-tabs-scope>
     {{ token() }}<input type="hidden" name="revision" value="{{ source_revision }}">
+    <nav class="tabs" role="tablist" aria-label="Configuration files" data-tabs>
+      {% for key, label in [('vpn','vpn.toml'),('hosts','hosts.toml'),('credentials','Credentials'),('rules','Connection filters')] %}
+      <button type="button" role="tab" data-tab="{{ key }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ label }}</button>
+      {% endfor %}
+    </nav>
     {% for key, label in [('vpn','Endpoint settings'),('hosts','TLS hosts'),('credentials','Clients'),('rules','Connection filters')] %}
-    <details {% if key == 'vpn' %}open{% endif %}>
-      <summary>{{ key }}.toml <span class="subtle">{{ label }}</span></summary>
-      <div class="details-body"><textarea class="code" aria-label="{{ key }}.toml" name="{{ key }}" rows="14" spellcheck="false">{{ source[key] }}</textarea></div>
-    </details>
-    {% endfor %}
-    <div><button class="primary">Save and restart</button></div>
-  </form>
-</details>
-<details class="card">
-  <summary>Startup options</summary>
-  <form class="details-body stack" method="post" action="{{ url_for('save_launch') }}" data-confirm="Apply the startup options and restart TrustTunnel?">
-    {{ token() }}
-    <div class="grid">
-      <label>Log level
-        <select name="loglvl">
-          {% for option in ['info','debug','trace'] %}
-          <option {% if launch.get('loglvl', 'info') == option %}selected{% endif %}>{{ option }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Thread count <input name="jobs" value="{{ launch.get('jobs', '') }}" type="number" min="1" max="9999" placeholder="Automatic"></label>
-      <label>Log file <input name="logfile" value="{{ launch.get('logfile', '') }}" placeholder="Defaults to the systemd journal"></label>
-      <label>Sentry DSN <input name="sentry_dsn" value="{{ launch.get('sentry_dsn', '') }}" spellcheck="false"></label>
+    <div data-tab-panel="{{ key }}">
+      <label class="subtle" for="toml-{{ key }}">{{ key }}.toml — {{ label }}</label>
+      <textarea class="code" id="toml-{{ key }}" aria-label="{{ key }}.toml" name="{{ key }}" rows="16" spellcheck="false">{{ source[key] }}</textarea>
     </div>
-    <div><button class="primary">Save startup options</button></div>
+    {% endfor %}
+    <div class="tab-actions">
+      <button class="primary">Save and restart</button>
+      <span class="subtle">Saving restarts TrustTunnel and interrupts active connections.</span>
+    </div>
   </form>
-</details>
+</section>
+<section class="section">
+  <div class="section-head"><h2>Startup options</h2></div>
+  <form method="post" action="{{ url_for('save_launch') }}" data-confirm="Apply the startup options and restart TrustTunnel?">
+    {{ token() }}
+    <div class="settings">
+      {% call setting('Log level', 'Verbosity of the endpoint journal output.') %}
+      <select name="loglvl" aria-label="Log level">
+        {% for option in ['info','debug','trace'] %}
+        <option {% if launch.get('loglvl', 'info') == option %}selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+      {% endcall %}
+      {% call setting('Thread count', 'Worker threads. Leave blank to choose automatically.') %}
+      <input name="jobs" value="{{ launch.get('jobs', '') }}" type="number" min="1" max="9999" placeholder="Automatic" aria-label="Thread count">
+      {% endcall %}
+      {% call setting('Log file', 'Defaults to the systemd journal.') %}
+      <input name="logfile" value="{{ launch.get('logfile', '') }}" placeholder="Systemd journal" aria-label="Log file">
+      {% endcall %}
+      {% call setting('Sentry DSN', 'Optional crash reporting endpoint.') %}
+      <input name="sentry_dsn" value="{{ launch.get('sentry_dsn', '') }}" spellcheck="false" aria-label="Sentry DSN">
+      {% endcall %}
+    </div>
+    <div class="actions separate">
+      <button class="primary">Save startup options</button>
+      <span class="subtle">Saving restarts TrustTunnel.</span>
+    </div>
+  </form>
+</section>
 {% endif %}
 {% endblock %}

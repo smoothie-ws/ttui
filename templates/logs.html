@@ -3,37 +3,43 @@
 {% block scripts %}<script defer src="{{ url_for('static', filename='logs.js') }}"></script>{% endblock %}
 {% block content %}
 {{ heading('Logs', 'Inspect the latest 500 journal entries per source.') }}
-<section class="card stack">
-  <form method="get" class="row">
-    <label>Service <select name="source" aria-label="Service">
+<section class="section">
+  <form method="get" class="toolbar">
+    <select name="source" aria-label="Service">
       {% for key, source in sources.items() %}<option value="{{ key }}" {% if key == filters.source %}selected{% endif %}>{{ source[0] }}</option>{% endfor %}
-    </select></label>
-    <label>Level <select name="level" aria-label="Level">
-      {% for key, label in [('', 'All'), ('3', 'Error and above'), ('4', 'Warning and above'), ('6', 'Info and above'), ('7', 'Debug and above')] %}
+    </select>
+    <select name="level" aria-label="Level">
+      {% for key, label in [('', 'All levels'), ('3', 'Error and above'), ('4', 'Warning and above'), ('6', 'Info and above'), ('7', 'Debug and above')] %}
       <option value="{{ key }}" {% if key == filters.level %}selected{% endif %}>{{ label }}</option>
       {% endfor %}
-    </select></label>
-    <label>Time range <select name="period" aria-label="Time range">
+    </select>
+    <select name="period" aria-label="Time range">
       <option value="">Latest entries</option>
       {% for period in periods %}<option value="{{ period }}" {% if period == filters.period %}selected{% endif %}>Last {{ period }}</option>{% endfor %}
-    </select></label>
-    <label>Search <input name="q" value="{{ filters.q }}" maxlength="200"></label>
+    </select>
+    <label class="search">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+      <input name="q" value="{{ filters.q }}" maxlength="200" placeholder="Search entries" aria-label="Search entries">
+    </label>
     <label class="check"><input name="follow" value="1" type="checkbox" {% if follow %}checked{% endif %}> Auto-refresh</label>
     <button>Filter</button>
+    <span class="spacer"></span>
+    <a class="button small" href="{{ url_for('logs', download=1, **filters) }}">Download filtered logs</a>
   </form>
-  <div><a class="button" href="{{ url_for('logs', download=1, **filters) }}">Download filtered logs</a></div>
   {% if error %}<p class="notice error">{{ error }}</p>{% endif %}
 </section>
-<section class="card stack" id="journal-entries" {% if follow %}data-refresh="1"{% endif %}>
-  <h2>Entries</h2>
+<section class="section" id="journal-entries" {% if follow %}data-refresh="1"{% endif %}>
+  <div class="section-head"><h2>Entries</h2></div>
   {% for row in rows %}
   <article class="journal-entry">
-    <time datetime="{{ row.time }}" class="subtle">{{ row.time }}</time>
-    <span class="status">{{ row.level }}</span>
+    <div class="journal-meta">
+      <time datetime="{{ row.time }}" class="subtle">{{ row.time }}</time>
+      <span class="status{% if row.level in ('Emergency', 'Alert', 'Critical', 'Error') %} danger{% elif row.level == 'Warning' %} warn{% endif %}">{{ row.level }}</span>
+    </div>
     <pre>{{ row.message }}</pre>
   </article>
   {% else %}
-  <p class="subtle">No matching entries.</p>
+  <p class="empty">No matching entries.</p>
   {% endfor %}
 </section>
 {% endblock %}

@@ -18,7 +18,7 @@ SOURCES = {
 }
 LEVELS = ["Emergency", "Alert", "Critical", "Error", "Warning", "Notice", "Info", "Debug"]
 
-def read_logs(source, query="", priority=None, after=None, before=None):
+def read_logs(source, query="", priority=None, after=None):
     _, unit, identifier = SOURCES[source]
     args = ["/usr/bin/sudo", "-n", "/usr/bin/journalctl",
             "--no-pager", "--output=json", "--lines=500", f"--unit={unit}"]
@@ -43,7 +43,7 @@ def read_logs(source, query="", priority=None, after=None, before=None):
             if hint:
                 level = {"warning": 4, "warn": 4, "error": 3, "debug": 7}[hint.group().strip("[]").lower()]
         if (priority is not None and level > priority or after is not None and when < after
-                or before is not None and when > before or query.casefold() not in message.casefold()):
+                or query.casefold() not in message.casefold()):
             continue
         rows.append({"time": datetime.fromtimestamp(when, timezone.utc).isoformat(timespec="seconds"),
                      "level": LEVELS[level], "message": message})

@@ -2,13 +2,27 @@
 {% block title %}Diagnostics{% endblock %}
 {% block content %}
 {{ heading('Diagnostics', 'Check service health, settings, and local connectivity.') }}
-<section class="card stack">
-  <form method="post">{{ token() }}<button class="primary">Run diagnostics</button></form>
-  {% for status, name, detail in rows %}
-  <article class="journal-entry">
-    <strong>{{ name }}</strong> <span class="status{% if status == 'OK' %} online{% elif status == 'Attention' %} danger{% endif %}">{{ status }}</span>
-    <p class="subtle">{{ detail }}</p>
-  </article>
-  {% endfor %}
+<section class="section">
+  <div class="section-head"><h2>Checks</h2>
+    <form method="post">{{ token() }}<button class="primary">Run diagnostics</button></form>
+  </div>
+  {% if rows %}
+  <div class="table-scroll">
+    <table aria-label="Diagnostic checks">
+      <thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>
+        {% for status, name, detail in rows %}
+        <tr>
+          <td class="cell-main">{{ name }}</td>
+          <td><span class="status{% if status == 'OK' %} online{% elif status == 'Attention' %} danger{% endif %}">{{ status }}</span></td>
+          <td class="subtle">{{ detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Run diagnostics to check this installation.</p>
+  {% endif %}
 </section>
 {% endblock %}

@@ -21,35 +21,32 @@ with sync_playwright() as playwright:
     expect(page.get_by_text("Services", exact=True)).to_be_visible()
     expect(page.get_by_text("Administrator sign-in", exact=True).first).to_be_visible()
     page.get_by_role("link", name="Clients", exact=True).click()
-    page.get_by_label("Username", exact=True).fill("browser-test")
-    page.get_by_role("button", name="Add", exact=True).click()
-    expect(page.get_by_text("Clients updated.")).to_be_visible()
-    for name in ("browser-one", "browser-two"):
-        page.get_by_label("Username", exact=True).fill(name)
-        page.get_by_role("button", name="Add", exact=True).click()
+    for name in ("browser-test", "browser-one", "browser-two"):
+        page.get_by_role("button", name="Add client").click()
+        dialog = page.locator("#add-client")
+        dialog.get_by_label("Username", exact=True).fill(name)
+        dialog.get_by_role("button", name="Add client").click()
         expect(page.get_by_text("Clients updated.")).to_be_visible()
 
     def select_clients():
         for name in ("browser-one", "browser-two"):
-            page.get_by_text(name, exact=True).first.click()
             page.get_by_label("Select " + name).check()
 
     select_clients()
     page.get_by_role("button", name="Disable selected").click()
     expect(page.get_by_text("Clients updated.")).to_be_visible()
     for name in ("browser-one", "browser-two"):
-        expect(page.locator("summary").filter(has_text=name)).to_contain_text("Disabled")
+        expect(page.locator("tr[data-client-row]").filter(has_text=name)).to_contain_text("Disabled")
     select_clients()
     page.get_by_role("button", name="Enable selected").click()
     expect(page.get_by_text("Clients updated.")).to_be_visible()
     for name in ("browser-one", "browser-two"):
-        expect(page.locator("summary").filter(has_text=name)).to_contain_text("Enabled")
+        expect(page.locator("tr[data-client-row]").filter(has_text=name)).to_contain_text("Enabled")
     select_clients()
     page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_role("button", name="Delete selected").click()
     expect(page.get_by_text("Clients updated.")).to_be_visible()
     expect(page.get_by_text("browser-one", exact=True)).to_have_count(0)
-    page.get_by_text("browser-test", exact=True).first.click()
     page.get_by_role("button", name="Export", exact=True).first.click()
     expect(page.locator("#export-value")).to_have_value(re.compile(r"^tt://\?"))
     page.goto(base + "/endpoint")

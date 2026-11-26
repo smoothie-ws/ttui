@@ -7,60 +7,86 @@
 {% block content %}
 {{ heading('Routing', 'The first matching rule selects the outbound.', 'Xray', router) }}
 {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
-<form id="routing-form" class="stack" method="post" action="{{ url_for('save_routing') }}">
+<form id="routing-form" method="post" action="{{ url_for('save_routing') }}">
   {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
-  <div id="routing-editor" class="stack" hidden>
-    <section class="card stack">
-      <label class="check"><input id="routing-enabled" type="checkbox"> Enable routing</label>
-      <div class="row">
+  <div id="routing-editor" hidden>
+    <section class="section">
+      <div class="section-head"><h2>General</h2></div>
+      <div class="grid">
+        <label class="check"><input id="routing-enabled" type="checkbox"> Enable routing</label>
         <label>Default outbound <select id="routing-default"></select></label>
         <label>DNS resolution for IP rules <select id="routing-strategy">
           <option value="AsIs">Use known IP addresses only</option><option value="IPIfNonMatch">If no domain rule matches</option><option value="IPOnDemand">When evaluating an IP rule</option>
         </select></label>
       </div>
     </section>
-    <section class="card stack">
-      <div class="section-title"><h2>Outbounds</h2><button type="button" id="add-outbound">Add outbound</button></div>
-      <p class="subtle">Built-in outbounds are direct (Freedom) and block (Blackhole).</p>
-      <div id="outbounds" class="stack"></div>
+    <section class="section">
+      <div class="section-head"><h2>Outbounds</h2><button type="button" id="add-outbound" class="small">Add outbound</button></div>
+      <p class="subtle">Built-in outbounds are direct (Freedom) and block (Blackhole). Secrets stay out of the table; open a row to edit them.</p>
+      <div class="table-scroll">
+        <table aria-label="Outbounds">
+          <thead><tr><th>Name</th><th>Protocol</th><th>Destination</th><th class="actions-cell">Actions</th></tr></thead>
+          <tbody id="outbounds"></tbody>
+        </table>
+      </div>
     </section>
-    <section class="card stack">
-      <div class="section-title"><h2>Rules</h2><button type="button" id="add-rule">Add rule</button></div>
-      <div id="rules" class="stack"></div>
-      <p class="subtle">Domains: domain:example.org, regexp:, geosite:, ext:file.dat:group. IP: CIDR, geoip:, ext:file.dat:group.</p>
-      <details><summary>Routing order</summary><ol id="routing-order"></ol></details>
+    <section class="section">
+      <div class="section-head"><h2>Routing rules</h2><button type="button" id="add-rule" class="small">Add rule</button></div>
+      <div class="table-scroll">
+        <table aria-label="Routing rules">
+          <thead><tr><th class="num">Priority</th><th>Domains</th><th>IP / CIDR</th><th>Ports</th><th>Outbound</th><th class="actions-cell">Actions</th></tr></thead>
+          <tbody id="rules"></tbody>
+        </table>
+      </div>
+      <p class="subtle">Domains: domain:example.org, regexp:, geosite:, ext:file.dat:group. IP: CIDR, geoip:, ext:file.dat:group. Open a rule to edit the full lists.</p>
+      <details class="flat"><summary>Routing order</summary><ol id="routing-order" class="details-body"></ol></details>
     </section>
   </div>
-  <details class="card" id="routing-raw" open>
-    <summary>JSON configuration</summary>
-    <div class="details-body stack">
-      <textarea class="code" name="spec" id="routing-spec" aria-label="Routing configuration (JSON)" rows="16" spellcheck="false">{{ source }}</textarea>
-      <div><button id="load-spec" type="button" hidden>Load JSON into editor</button></div>
-    </div>
-  </details>
+  <section class="section">
+    <details class="flat" id="routing-raw" open>
+      <summary>JSON configuration</summary>
+      <div class="details-body stack">
+        <textarea class="code" name="spec" id="routing-spec" aria-label="Routing configuration (JSON)" rows="16" spellcheck="false">{{ source }}</textarea>
+        <div><button id="load-spec" type="button" hidden>Load JSON into editor</button></div>
+      </div>
+    </details>
+  </section>
   <p id="routing-error" class="notice error" role="alert" hidden></p>
-  <div class="actions">
+  <div class="tab-actions">
     <button class="primary" name="operation" value="apply">Apply routing</button>
     <button name="operation" value="validate">Validate in Xray</button>
   </div>
 </form>
-<section class="card stack">
-  <h2>Geodata files</h2>
+<section class="section">
+  <div class="section-head"><h2>Geodata files</h2></div>
   {% if geofiles %}
-  <div class="host-list">
-    {% for file in geofiles %}
-    <div class="stack"><div><strong>{{ file.name }}</strong> <span class="subtle">{{ '%.1f MiB'|format(file.size / 1048576) }} · <time datetime="{{ file.updated }}">{{ file.updated }}</time></span></div>
-      <details><summary>Verify SHA-256</summary>
-        <form class="row" method="post" action="{{ url_for('verify_geo') }}">{{ token() }}<input type="hidden" name="name" value="{{ file.name }}">
-          <label>Expected SHA-256 <input name="sha256" maxlength="64" spellcheck="false" placeholder="Optional"></label>
-          <button>Calculate or verify</button>
-        </form>
-      </details>
-    </div>
-    {% endfor %}
+  <div class="table-scroll">
+    <table aria-label="Geodata files">
+      <thead><tr><th>File</th><th class="num">Size</th><th>Updated</th><th class="actions-cell">Actions</th></tr></thead>
+      <tbody>
+        {% for file in geofiles %}
+        <tr>
+          <td class="mono">{{ file.name }}</td>
+          <td class="num">{{ '%.1f MiB'|format(file.size / 1048576) }}</td>
+          <td><time class="subtle" datetime="{{ file.updated }}">{{ file.updated }}</time></td>
+          <td class="actions-cell"><button type="button" class="small" data-expand aria-controls="geo-detail-{{ loop.index }}" aria-expanded="false">Verify SHA-256</button></td>
+        </tr>
+        <tr class="detail-row" id="geo-detail-{{ loop.index }}">
+          <td colspan="4">
+            <form class="row" method="post" action="{{ url_for('verify_geo') }}">{{ token() }}<input type="hidden" name="name" value="{{ file.name }}">
+              <label>Expected SHA-256 <input name="sha256" maxlength="64" spellcheck="false" placeholder="Optional"></label>
+              <button>Calculate or verify</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
+  {% else %}
+  <p class="empty">No geodata files yet. Upload geosite.dat or geoip.dat for geosite and geoip rules.</p>
   {% endif %}
-  <form class="row" method="post" action="{{ url_for('upload_geo') }}" enctype="multipart/form-data">
+  <form class="row separate" method="post" action="{{ url_for('upload_geo') }}" enctype="multipart/form-data">
     {{ token() }}
     <label>Xray .dat file <input name="data" type="file" accept=".dat" required></label>
     <label>SHA-256 <input name="sha256" maxlength="64" spellcheck="false" placeholder="Optional checksum"></label>

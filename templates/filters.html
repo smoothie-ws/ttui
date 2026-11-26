@@ -3,43 +3,58 @@
 {% block content %}
 {{ heading('Connection filters', 'TrustTunnel applies the first matching rule and allows unmatched connections.') }}
 {% macro rule(index, values) %}
-  <fieldset class="card stack" data-filter-row>
+<tr data-filter-row>
+  <td>
     <input type="hidden" name="rule_index" value="{{ index }}">
-    <div class="grid">
-      <label>Action <select name="action">
-        <option value="allow">Allow</option><option value="deny" {% if values.get('action') == 'deny' %}selected{% endif %}>Deny</option>
-      </select></label>
-      <label>Source CIDR <input name="cidr" value="{{ values.get('cidr', '') }}" placeholder="Any address"></label>
-      <label>TLS random prefix or prefix/mask <input name="client_random_prefix" value="{{ values.get('client_random_prefix', '') }}" spellcheck="false"></label>
-      <label>TLS random auth key <input name="client_random_auth_key" type="password" autocomplete="off" value="{{ values.get('client_random_auth_key', '') }}" spellcheck="false"></label>
+    <select name="action" aria-label="Action">
+      <option value="allow">Allow</option><option value="deny" {% if values.get('action') == 'deny' %}selected{% endif %}>Deny</option>
+    </select>
+  </td>
+  <td><input name="cidr" value="{{ values.get('cidr', '') }}" placeholder="Any address" aria-label="Source CIDR"></td>
+  <td><input name="client_random_prefix" value="{{ values.get('client_random_prefix', '') }}" spellcheck="false" placeholder="Optional" aria-label="TLS random prefix or prefix/mask"></td>
+  <td><input name="client_random_auth_key" type="password" autocomplete="off" value="{{ values.get('client_random_auth_key', '') }}" spellcheck="false" placeholder="Optional" aria-label="TLS random auth key"></td>
+  <td class="actions-cell">
+    <div class="actions">
+      <button type="button" class="icon-button small" data-filter-action="up" aria-label="Move rule up">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12V4M4.5 7.5 8 4l3.5 3.5"/></svg>
+      </button>
+      <button type="button" class="icon-button small" data-filter-action="down" aria-label="Move rule down">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4v8M4.5 8.5 8 12l3.5-3.5"/></svg>
+      </button>
+      <button type="button" class="small danger" data-filter-action="remove">Remove</button>
     </div>
-    <div class="row">
-      <button type="button" data-filter-action="up">Move up</button>
-      <button type="button" data-filter-action="down">Move down</button>
-      <button type="button" data-filter-action="remove">Remove</button>
-    </div>
-  </fieldset>
+  </td>
+</tr>
 {% endmacro %}
-<form class="stack" method="post" data-filter-form>
+<form method="post" data-filter-form>
   {{ token() }}<input type="hidden" name="revision" value="{{ revision }}"><input type="hidden" name="candidate" value="{{ candidate }}">
-  <section class="card stack">
-    <label>Filter file {{ filename }} <select name="state">
-      <option value="off">Disabled</option><option value="on" {% if enabled %}selected{% endif %}>Enabled</option>
-    </select></label>
+  <section class="section">
+    <div class="section-head"><h2>Filter rules</h2>
+      <button type="button" class="small" data-filter-action="add">Add rule</button>
+    </div>
+    <div class="grid">
+      <label>Filter file {{ filename }} <select name="state">
+        <option value="off">Disabled</option><option value="on" {% if enabled %}selected{% endif %}>Enabled</option>
+      </select></label>
+    </div>
     <p class="subtle">Leave the match fields empty for a rule that applies to every connection.</p>
-    <div class="stack" data-filter-rows>
-      {% for index, values in rows %}{{ rule(index, values) }}{% endfor %}
+    <div class="table-scroll">
+      <table aria-label="Connection filter rules">
+        <thead><tr><th>Action</th><th>Source CIDR</th><th>TLS random prefix</th><th>Auth key</th><th class="actions-cell">Actions</th></tr></thead>
+        <tbody data-filter-rows>
+          {% for index, values in rows %}{{ rule(index, values) }}{% endfor %}
+        </tbody>
+      </table>
     </div>
     <template data-filter-template>{{ rule('', {}) }}</template>
-    <div><button type="button" data-filter-action="add">Add rule</button></div>
   </section>
   {% if preview is not none %}
-  <section class="card stack">
-    <h2>Proposed changes</h2>
+  <section class="section">
+    <div class="section-head"><h2>Proposed changes</h2></div>
     {% if preview %}<textarea rows="10" class="code" readonly aria-label="Configuration diff">{{ preview }}</textarea>{% else %}<p>No changes.</p>{% endif %}
   </section>
   {% endif %}
-  <div class="row">
+  <div class="tab-actions">
     <button name="operation" value="preview">Preview changes</button>
     {% if preview %}<button class="primary" name="operation" value="apply">Apply and restart</button>{% endif %}
     <a class="button" href="{{ url_for('endpoint') }}">TrustTunnel settings</a>

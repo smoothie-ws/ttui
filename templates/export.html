@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Connection export{% endblock %}
 {% block content %}
-{{ heading('Connection for ' ~ username, 'This contains the client password. Share it through a secure channel.') }}
-<section class="card stack">
+{{ heading('Connection for ' ~ username, 'TOML configuration' if fmt == 'toml' else 'tt:// link') }}
+<section class="section stack">
+  <p class="notice warn">This export contains the client password. Share it through a secure channel.</p>
   {% if qr_svg %}
-  <details>
+  <details class="flat">
     <summary>Show connection QR code</summary>
-    <figure class="connection-qr" aria-label="QR code containing the connection link">{{ qr_svg|safe }}</figure>
+    <div class="details-body">
+      <figure class="connection-qr" aria-label="QR code containing the connection link">{{ qr_svg|safe }}</figure>
+    </div>
   </details>
   {% elif fmt == 'deeplink' %}
   <p class="subtle">This connection link is too long for a QR code. Copy or download it below.</p>

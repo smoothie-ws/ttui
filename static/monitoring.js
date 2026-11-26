@@ -4,7 +4,6 @@ if (chartData) {
   const points = JSON.parse(chartData.dataset.points);
   const kinds = {
     usage: [[1, "CPU", 1], [2, "RAM", 1]],
-    disk: [[3, "Free disk", 1073741824]],
     traffic: [[4, "Received", 1024], [5, "Sent", 1024]]
   };
 
@@ -20,7 +19,7 @@ if (chartData) {
     ctx.scale(scale, scale);
     ctx.font = "11px system-ui";
     const theme = getComputedStyle(document.body);
-    const colors = [theme.getPropertyValue("--accent").trim(), theme.getPropertyValue("--green").trim()];
+    const colors = [theme.getPropertyValue("--chart-1").trim(), theme.getPropertyValue("--chart-2").trim()];
     const ink = theme.getPropertyValue("--ink").trim();
     const pad = 42;
     const end = points[points.length - 1][0];
@@ -67,4 +66,5 @@ if (chartData) {
   const resize = new ResizeObserver(() => charts.forEach(draw));
   resize.observe(chartData);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => charts.forEach(draw));
+  new MutationObserver(() => charts.forEach(draw)).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
 }
