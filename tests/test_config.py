@@ -222,6 +222,35 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(b.read(credentials), original)
         self.assertFalse(ClientManager(vpn).visible(status="disabled"))
 
+    def test_bulk_client_changes_preserve_order_comments_and_disabled_data(self):
+        vpn = tomlkit.parse('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n')
+        credentials, _ = b.related(vpn)
+        credentials.write_text('# Credentials\n[[client]]\nusername = "first"\npassword = "one"\n'
+                               '[[client]]\nusername = "second"\npassword = "two"\n'
+                               '[[client]]\nusername = "third"\npassword = "three"\n', encoding="utf-8")
+        manager = ClientManager(vpn)
+        before = tomlkit.dumps(manager.document)
+        manager.change_many(["third", "first"], "disable", {})
+        manager.save(before)
+        self.assertTrue(b.read(credentials).startswith("# Credentials\n"))
+        self.assertEqual([entry["username"] for entry in b.configured_clients(vpn)], ["second"])
+        manager = ClientManager(vpn)
+        self.assertEqual({row["username"] for row in manager.visible(status="disabled")}, {"first", "third"})
+        manager.change_many(["first", "third"], "enable", {})
+        self.assertEqual([entry["username"] for entry in manager.entries], ["second", "first", "third"])
+        self.assertEqual([entry["password"] for entry in manager.entries], ["two", "one", "three"])
+
+    def test_failed_bulk_change_does_not_write_partial_results(self):
+        vpn = tomlkit.parse('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n')
+        credentials, _ = b.related(vpn)
+        original = '[[client]]\nusername = "first"\npassword = "secret"\n'
+        credentials.write_text(original, encoding="utf-8")
+        manager = ClientManager(vpn)
+        with self.assertRaisesRegex(ValueError, "Client not found"):
+            manager.change_many(["first", "missing"], "disable", {})
+        self.assertEqual(b.read(credentials), original)
+        self.assertFalse(manager.path.exists())
+
     def test_client_limits_survive_disabling_and_can_inherit_defaults(self):
         vpn = tomlkit.parse('listen_address = "127.0.0.1:443"\ncredentials_file = "clients.toml"\n')
         manager = ClientManager(vpn)

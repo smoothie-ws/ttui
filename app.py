@@ -523,8 +523,7 @@ def update_client():
     if len(names) > 1 and operation not in ("enable", "disable", "delete"):
         raise ValueError("Unknown bulk operation.")
     before = tomlkit.dumps(manager.document)
-    for name in names:
-        manager.change(name, operation, request.form)
+    manager.change_many(names, operation, request.form)
     manager.save(before)
     return saved("index", "Clients updated.")
 

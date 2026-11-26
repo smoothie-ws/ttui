@@ -127,8 +127,8 @@ class ClientManager:
         self.document["client"].append(entry)
         self.entries = self.document["client"]
 
-    def change(self, name, operation, form):
-        active = self.native_entry(name)
+    def change(self, name, operation, form, *, active_lookup=None, removals=None):
+        active = self.native_entry(name) if active_lookup is None else active_lookup.get(name)
         record = self.records.get(name, {})
         disabled = tomlkit.parse(record["disabled"]) if "disabled" in record else None
         if active is not None and disabled is not None:
@@ -143,13 +143,19 @@ class ClientManager:
             self.records[name] = {"created": datetime.now(timezone.utc).date().isoformat()}
         elif operation == "disable" and active is not None:
             self.records.setdefault(name, {})["disabled"] = tomlkit.dumps(active)
-            self.entries.remove(active)
+            if removals is None:
+                self.entries.remove(active)
+            else:
+                removals.add(name)
         elif operation == "enable" and disabled is not None:
             record.pop("disabled")
             self.append(dict(disabled))
         elif operation == "delete":
             if active is not None:
-                self.entries.remove(active)
+                if removals is None:
+                    self.entries.remove(active)
+                else:
+                    removals.add(name)
             self.records.pop(name, None)
         elif operation == "rotate":
             (active if active is not None else disabled)["password"] = self.password(form)
@@ -178,6 +184,22 @@ class ClientManager:
             history = self.records.setdefault(name, {}).setdefault("history", [])
             history.append({"action": operation, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
             del history[:-20]
+
+    def change_many(self, names, operation, form):
+        if len(names) <= 1 or operation not in ("enable", "disable", "delete"):
+            for name in names:
+                self.change(name, operation, form)
+            return
+        lookup = {entry["username"]: entry for entry in self.entries}
+        removals = set()
+        for name in names:
+            self.change(name, operation, form, active_lookup=lookup, removals=removals)
+        if removals:
+            entries = tomlkit.aot()
+            for entry in self.entries:
+                if entry["username"] not in removals:
+                    entries.append(entry)
+            self.document["client"] = self.entries = entries
 
     @staticmethod
     def password(form):
