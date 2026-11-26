@@ -16,13 +16,14 @@ LATEST = "https://api.github.com/repos/trusttunnel-ui/ttui-panel/releases/latest
 UNIT = "ttui-update.service"
 RELEASE_INFO = Path(__file__).with_name("release-info.json")
 COMPONENTS = {"endpoint": "TrustTunnel Endpoint", "client": "TrustTunnel Client", "xray": "Xray"}
-SEMVER = r"(?:0|[1-9][0-9]{0,5})(?:\.(?:0|[1-9][0-9]{0,5})){2}"
-ASSETS = {"ttui.tar.gz", "ttui.tar.gz.sha256", "release-info.json"}
+# Releases are named by publication date: YY.MM.DD.
+DATE = r"[0-9]{2}\.[0-9]{2}\.[0-9]{2}"
+ASSETS = {"ttui.tar.xz", "ttui.tar.xz.sha256", "release-info.json"}
 MIN_SPACE = 256 * 1024 * 1024
 
 def version_number(value):
-    if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
-        raise ValueError("Expected a stable numeric release version.")
+    if not isinstance(value, str) or not re.fullmatch(DATE, value):
+        raise ValueError("Expected a release version named by publication date (YY.MM.DD).")
     return tuple(map(int, value.split(".")))
 
 def metadata(data, version):
@@ -31,7 +32,7 @@ def metadata(data, version):
     components = data.get("components")
     minimum = data.get("minimum_python")
     if (not isinstance(components, dict) or set(components) != COMPONENTS.keys()
-            or any(not isinstance(tag, str) or not re.fullmatch("v" + SEMVER, tag) for tag in components.values())
+            or any(not isinstance(tag, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) for tag in components.values())
             or any(not isinstance(data.get(key), list) or any(not isinstance(item, str) for item in data[key])
                    for key in ("systems", "architectures"))
             or not isinstance(minimum, list) or len(minimum) != 2 or any(type(part) is not int or part < 0 for part in minimum)):
@@ -71,9 +72,9 @@ def latest(installed):
     if not isinstance(data, dict) or data.get("prerelease") is not False or data.get("draft") is not False:
         raise ValueError("Could not confirm a stable ttui release.")
     tag = data.get("tag_name")
-    if not isinstance(tag, str) or not tag.startswith("v"):
+    if not isinstance(tag, str) or not re.fullmatch(DATE, tag):
         raise ValueError("The latest stable release has an unsupported version.")
-    newer = version_number(tag[1:]) > version_number(installed)
+    newer = version_number(tag) > version_number(installed)
     notes = data.get("body") or ""
     release = {"tag": tag, "notes": notes[:24000] if isinstance(notes, str) else "",
                "url": f"{REPOSITORY}/releases/tag/{tag}", "compatible": False, "components": {}, "problem": None}
@@ -88,7 +89,7 @@ def latest(installed):
     if not ASSETS <= assets:
         release["problem"] = "The release is missing the package, checksum, or compatibility metadata."
         return release
-    info = metadata(fetch(f"{REPOSITORY}/releases/download/{tag}/release-info.json", 16384), tag[1:])
+    info = metadata(fetch(f"{REPOSITORY}/releases/download/{tag}/release-info.json", 16384), tag)
     release["components"] = info["components"]
     release["problem"] = compatibility(info)
     release["compatible"] = release["problem"] is None
@@ -104,12 +105,12 @@ def status():
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         values = {}
     tag = b.read(request_file(), "").strip()
-    return {"available": values.get("LoadState") == "loaded", "tag": tag if re.fullmatch("v" + SEMVER, tag) else "",
+    return {"available": values.get("LoadState") == "loaded", "tag": tag if re.fullmatch(DATE, tag) else "",
             "busy": values.get("ActiveState") in ("activating", "active", "deactivating"),
             "failed": values.get("ActiveState") == "failed"}
 
 def queue(tag):
-    if not isinstance(tag, str) or not re.fullmatch("v" + SEMVER, tag):
+    if not isinstance(tag, str) or not re.fullmatch(DATE, tag):
         raise ValueError("Invalid update release version.")
     state = status()
     if not state["available"] or state["busy"]:

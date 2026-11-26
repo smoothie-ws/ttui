@@ -33,16 +33,12 @@
     <a class="brand" href="{{ url_for('dashboard') }}">ttui</a>
   </div>
   <nav aria-label="Sections">
-    {% for section, items in [
-      ('Overview', [('dashboard','Dashboard')]),
-      ('VPN', [('index','Clients'),('endpoint','TrustTunnel'),('tls_hosts','TLS & Certificates')]),
-      ('Routing', [('routing','Xray & Routing')]),
-      ('Operations', [('logs','Logs'),('diagnostics','Diagnostics')]),
-      ('System', [('backups','Backups'),('updates','Updates'),('panel_settings','Settings')])] %}
-    <span class="nav-label">{{ section }}</span>
-    {% for endpoint, label in items %}
-    <a href="{{ url_for(endpoint) }}" {% if request.endpoint == endpoint or (endpoint == 'index' and request.endpoint == 'export') or (endpoint == 'endpoint' and request.endpoint == 'server') %}aria-current="page"{% endif %}>{{ label }}</a>
-    {% endfor %}
+    {% for endpoint, label in [
+      ('dashboard','Dashboard'), ('index','Clients'), ('endpoint','TrustTunnel'),
+      ('tls_hosts','TLS & Certificates'), ('routing','Xray & Routing'), ('logs','Logs'),
+      ('diagnostics','Diagnostics'), ('backups','Backups'), ('updates','Updates'),
+      ('panel_settings','Settings')] %}
+    <a href="{{ url_for(endpoint) }}" {% if request.endpoint == endpoint or (endpoint == 'index' and request.endpoint == 'export') %}aria-current="page"{% endif %}>{{ label }}</a>
     {% endfor %}
   </nav>
   <div class="sidebar-foot">

@@ -183,7 +183,7 @@
   <div class="section-head"><h2>Configuration files</h2></div>
   {% if save_error %}<p class="notice error" role="alert">{{ save_error }}</p>{% endif %}
   {% if routed %}<p class="subtle">While routing is enabled, the panel points forward_protocol at the local Xray instance.</p>{% endif %}
-  <form method="post" action="{{ url_for('save_server') }}" data-confirm="Apply the configuration and restart TrustTunnel?" data-tabs-scope>
+  <form method="post" action="{{ url_for('save_source') }}" data-confirm="Apply the configuration and restart TrustTunnel?" data-tabs-scope>
     {{ token() }}<input type="hidden" name="revision" value="{{ source_revision }}">
     <nav class="tabs" role="tablist" aria-label="Configuration files" data-tabs>
       {% for key, label in [('vpn','vpn.toml'),('hosts','hosts.toml'),('credentials','Credentials'),('rules','Connection filters')] %}

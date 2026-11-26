@@ -170,7 +170,7 @@ class PanelTest(unittest.TestCase):
             client.post("/ttui/login", base_url="http://panel.example.com", data={
                 "csrf": token, "username": "admin", "password": "correct-password",
             })
-            page = client.get("/ttui/server", base_url="http://panel.example.com")
+            page = client.get("/ttui/endpoint", base_url="http://panel.example.com")
             self.assertIn(b"Create node on panel.example.com:443", page.data)
             self.assertIn(b"Start TrustTunnel", page.data)
 

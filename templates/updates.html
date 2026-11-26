@@ -8,7 +8,7 @@
     <table aria-label="Installed components">
       <thead><tr><th>Component</th><th>Installed{% if release %} → Available{% endif %}</th></tr></thead>
       <tbody>
-        <tr><td class="cell-main">ttui</td><td class="mono">v{{ version }}{% if release %} → {{ release.tag }}{% endif %}</td></tr>
+        <tr><td class="cell-main">ttui</td><td class="mono">{{ version }}{% if release %} → {{ release.tag }}{% endif %}</td></tr>
         {% for key, name in names.items() %}
         <tr><td class="cell-main">{{ name }}</td><td class="mono">{{ installed.get(key, 'Unavailable') }}{% if release and release.components %} → {{ release.components[key] }}{% endif %}</td></tr>
         {% endfor %}
@@ -21,7 +21,7 @@
   <p class="notice separate" data-update-running role="status">The installation of {{ update.tag or 'the requested release' }} is running.</p>
   {% elif update.failed %}
   <p class="notice error separate" role="status">The updater reported an error. Check the update log for the result and any recovery details.</p>
-  {% elif update.tag == 'v' ~ version %}
+  {% elif update.tag == version %}
   <p class="notice separate" role="status">{{ update.tag }} is installed.</p>
   {% elif update.tag %}
   <p class="notice separate" role="status">The last request for {{ update.tag }} is no longer running. Check the update log before retrying.</p>

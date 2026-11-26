@@ -10,6 +10,7 @@ User=ttui
 Group=ttui
 WorkingDirectory=/opt/ttui
 Environment=TTUI_STATE=/var/lib/ttui
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecCondition=/opt/ttui/venv/bin/python /opt/ttui/app.py --routing-enabled
 ExecStart=/opt/ttui/venv/bin/python /opt/ttui/routing.py /var/lib/ttui /opt/ttui/xray/xray /opt/ttui/trusttunnel_client
 TimeoutStartSec=60

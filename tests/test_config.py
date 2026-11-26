@@ -497,7 +497,7 @@ class ConfigTest(unittest.TestCase):
             login = client.get("/ttui/login")
             token = re.search(rb'name="csrf" value="([^"]+)"', login.data)[1].decode()
             client.post("/ttui/login", data={"csrf": token, "username": "admin", "password": "example"})
-            token = re.search(rb'name="csrf" value="([^"]+)"', client.get("/ttui/server").data)[1].decode()
+            token = re.search(rb'name="csrf" value="([^"]+)"', client.get("/ttui/endpoint").data)[1].decode()
             response = client.post("/ttui/setup", data={"csrf": token, "hostname": "vpn.example.com",
                                    "bind": "127.0.0.1", "port": "65536", "username": "laptop",
                                    "quic": "on", "acme_email": "admin@example.com", "acme_terms": "on"},
@@ -508,7 +508,7 @@ class ConfigTest(unittest.TestCase):
             self.assertIn(b'name="acme_email" type="email" maxlength="254" value="admin@example.com"', response.data)
             self.assertIn(b'name="quic" checked', response.data)
             self.assertIn(b'name="acme_terms" type="checkbox" checked', response.data)
-            self.assertNotIn(b'value="vpn.example.com"', client.get("/ttui/server").data)
+            self.assertNotIn(b'value="vpn.example.com"', client.get("/ttui/endpoint").data)
 
     def test_routing_does_not_start_stopped_services(self):
         self.write_vpn()
@@ -617,9 +617,9 @@ class ConfigTest(unittest.TestCase):
             data["revision"] = panel.revision(panel.server_sources()[2])
             data["vpn"] = vpn.replace("old.toml", "new.toml")
             edited = {**data, "credentials": old.replace("secret", "changed")}
-            self.assertEqual(client.post("/ttui/server", data=edited).status_code, 400)
+            self.assertEqual(client.post("/ttui/endpoint/source", data=edited).status_code, 400)
             data["credentials"] = old.replace("\n", "\r\n")
-            self.assertEqual(client.post("/ttui/server", data=data).status_code, 302)
+            self.assertEqual(client.post("/ttui/endpoint/source", data=data).status_code, 302)
         self.assertEqual((b.CONFIG / "new.toml").read_text(encoding="utf-8"), new)
         self.assertIn("new.toml", b.read(b.VPN))
 
@@ -630,9 +630,9 @@ class ConfigTest(unittest.TestCase):
         new = '[[client]]\nusername = "new"\npassword = "secret"\n'
         (b.CONFIG / "new.toml").write_text(new, encoding="utf-8")
         source = panel.server_sources()[2]
-        with patch.dict(panel.app.config, SECRET_KEY="secret"), panel.app.test_request_context("/server", method="POST", data={
+        with patch.dict(panel.app.config, SECRET_KEY="secret"), panel.app.test_request_context("/endpoint", method="POST", data={
             **source, "vpn": vpn.replace("old.toml", "new.toml"), "revision": panel.revision(source),
         }):
-            self.assertEqual(panel.save_server().status_code, 302)
+            self.assertEqual(panel.save_source().status_code, 302)
         self.assertIn("new.toml", b.read(b.VPN))
         self.assertEqual((b.CONFIG / "new.toml").read_text(encoding="utf-8"), new)

@@ -21,7 +21,7 @@ LABELS = {
     "updates": "Update operation",
     "update_client": "Client settings changed",
     "export": "Client connection exported",
-    "save_server": "Advanced configuration saved",
+    "save_source": "Advanced configuration saved",
     "save_launch": "Startup options saved",
     "setup_endpoint": "TrustTunnel configured",
     "endpoint": "Endpoint settings changed",

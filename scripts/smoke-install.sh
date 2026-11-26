@@ -9,8 +9,8 @@ umask 077
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 mkdir "$work/source"
-(cd dist && sha256sum --check --strict ttui.tar.gz.sha256)
-tar -xzf dist/ttui.tar.gz -C "$work/source"
+(cd dist && sha256sum --check --strict ttui.tar.xz.sha256)
+tar -xJf dist/ttui.tar.xz -C "$work/source"
 install_panel() {
     local command
     printf -v command '%q ' sudo bash "$work/source/install.sh" --source "$work/source" "$@"
@@ -93,10 +93,10 @@ submit("/login", get("/login"), username="admin", password=password)
 assert "Not configured" in get("/")
 assert "TrustTunnel Endpoint" in get("/updates")
 assert "The systemd updater is unavailable" not in get("/updates")
-assert 'data-chart="usage"' in get("/monitoring")
+assert 'data-chart="usage"' in get("/")
 assert "The service journal is unavailable" not in get("/logs")
 assert "Accepting connections on 127.0.0.1:8080." in submit("/diagnostics", get("/diagnostics"))
-server = get("/server")
+server = get("/endpoint")
 assert "Set up TrustTunnel" in server
 page = submit("/setup", server, hostname="smoke.example", bind="127.0.0.1", port="17443", username="smoke")
 assert "TrustTunnel is running." in page, "Panel setup failed"
@@ -119,7 +119,7 @@ assert endpoint["hostname"] == "smoke.example"
 assert endpoint["username"] == "smoke" and endpoint["password"]
 assert endpoint.get("skip_verification", False) is False
 assert "-----BEGIN CERTIFICATE-----" in endpoint["certificate"]
-assert "Set up TrustTunnel" not in get("/server")
+assert "Set up TrustTunnel" not in get("/endpoint")
 assert "Not configured" not in get("/")
 routing_page = get("/routing")
 csrf = re.search(r'name="csrf" value="([^\"]+)"', routing_page)[1]
@@ -342,7 +342,7 @@ sudo -u ttui sed -i -E 's/("next": )"[^"]+"/\1"2000-01-01T00:00:00+00:00"/' /var
 sudo systemctl start ttui-backups.service
 sudo grep -Fq -- '-auto.zip' /var/lib/ttui/backup-schedule.json
 sudo systemctl is-active --quiet trusttunnel.service
-printf 'v0.0.0\n' | sudo -u ttui tee /var/lib/ttui/update-request >/dev/null
+printf '20.01.01\n' | sudo -u ttui tee /var/lib/ttui/update-request >/dev/null
 sudo -u ttui sudo -n /usr/bin/systemctl start --no-block ttui-update.service
 for _ in {1..20}; do
     if systemctl is-failed --quiet ttui-update.service; then break; fi

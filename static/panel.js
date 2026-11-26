@@ -2,15 +2,14 @@
 
 document.documentElement.classList.replace("no-js", "js");
 
-/* Theme: follow the system by default, remember an explicit choice. */
+/* Theme: dark by default, remember an explicit choice. */
 const THEME_KEY = "ttui-theme";
 const pageRoot = document.documentElement;
 try {
   const stored = localStorage.getItem(THEME_KEY);
-  if (stored === "light" || stored === "dark") pageRoot.dataset.theme = stored;
-} catch { /* Storage unavailable: keep the system theme. */ }
-const isDark = () => pageRoot.dataset.theme === "dark"
-  || (!pageRoot.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+  if (stored === "light") pageRoot.dataset.theme = "light";
+} catch { /* Storage unavailable: keep the default theme. */ }
+const isDark = () => pageRoot.dataset.theme !== "light";
 const syncThemeToggle = () => {
   for (const toggle of document.querySelectorAll(".theme-toggle")) {
     toggle.setAttribute("aria-pressed", String(isDark()));

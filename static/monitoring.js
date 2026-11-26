@@ -65,6 +65,5 @@ if (chartData) {
   const charts = chartData.querySelectorAll("canvas");
   const resize = new ResizeObserver(() => charts.forEach(draw));
   resize.observe(chartData);
-  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => charts.forEach(draw));
   new MutationObserver(() => charts.forEach(draw)).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
 }

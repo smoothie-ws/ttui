@@ -22,7 +22,7 @@ sudo bash install.sh --source "$PWD" --domain panel.example.com
 
 Run the command from a checkout that includes browser-first setup. Point the panel domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy. The installer starts the web panel and prints its HTTPS URL and sign-in details. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. On a fresh server, the VPN endpoint stays unconfigured until you complete setup in the browser.
 
-For an advanced deployment, pass `--port 8088` to change the internal panel port, `--external-proxy` to use an existing HTTPS proxy, or `--local` for SSH-only access. The removed `--panel-only` option now fails with a migration hint: every installation includes the TrustTunnel tools, and access mode is selected separately. The installer refuses an internal port below 1024 or one already in use, and it writes the chosen port to `/etc/default/ttui`.
+For an advanced deployment, pass `--port 8088` to change the internal panel port, `--external-proxy` to use an existing HTTPS proxy, or `--local` for SSH-only access. Every installation includes the TrustTunnel tools, and access mode is selected separately. The installer refuses an internal port below 1024 or one already in use, and it writes the chosen port to `/etc/default/ttui`.
 
 Sign in and open **TrustTunnel**. When the panel is opened through its DNS name, the recommended **Create node** button configures the endpoint on that same hostname, generates the first client `default`, creates a self-signed certificate, and enables HTTP/3. Open the endpoint TCP port, and UDP for HTTP/3. The custom form still accepts a separate VPN hostname, listen address, port, and username, and can reuse an existing certificate. TrustTunnel includes the generated certificate in client exports, so clients can verify the endpoint. After setup, go to **Clients** to export the first connection.
 
@@ -58,12 +58,10 @@ Open **Updates** to check the latest stable GitHub release, read its notes, comp
 ```bash
 ttui version
 sudo ttui update
-sudo ttui update --version v0.2.0
+sudo ttui update --version 26.11.26
 ```
 
-The installer selects the latest stable GitHub release by default. It preserves `/etc/trusttunnel`, `/var/lib/ttui`, systemd drop-in files, and `/etc/default/ttui`. It restarts active services, which can briefly interrupt VPN connections. If the update fails, the installer restores the previous application files and attempts to restart the services. Add `--allow-downgrade` to install an older release explicitly. When switching between versions with different configuration formats, restore a compatible backup.
-
-For an older installation without the `ttui` command, run the installer again. It updates the panel and installs the command for future updates.
+The installer selects the latest stable GitHub release by default. It preserves `/etc/trusttunnel`, `/var/lib/ttui`, systemd drop-in files, and `/etc/default/ttui`. It restarts active services, which can briefly interrupt VPN connections. If the update fails, the installer restores the previous application files and attempts to restart the services. Older releases cannot be installed over a newer one.
 
 ## Backups
 
@@ -75,14 +73,14 @@ Under **Automatic backups**, choose a daily or weekly schedule and the component
 
 ## Releases
 
-Work takes place on the `dev` branch. GitHub Actions runs on pushes to `dev` and `main`, and on pull requests. CI checks Python, JavaScript, and Bash, then tests installation, updates, and rollback on Linux. To prepare a stable release, update `VERSION` and [CHANGELOG.md](CHANGELOG.md) on `dev`. After the changes pass review and CI, push the matching SemVer tag from a commit in the history of `dev`.
+Versions are named by publication date: `YY.MM.DD`. Work takes place on the `dev` branch. GitHub Actions runs on pushes to `dev` and `main`, and on pull requests. CI checks Python, JavaScript, and Bash, then tests installation, updates, and rollback on Linux. To prepare a release, set `VERSION` and add a [CHANGELOG.md](CHANGELOG.md) entry for the publication date on `dev`. After the changes pass review and CI, merge `dev` into `main` and push the matching date tag on the day of publishing.
 
 ```bash
-git tag -a v0.2.0 -m "ttui v0.2.0"
-git push origin v0.2.0
+git tag -a 26.11.26 -m "ttui 26.11.26"
+git push origin 26.11.26
 ```
 
-The **Release** workflow verifies the tagged commit, reruns the checks, and publishes the archive, SHA-256 checksum, bootstrap script, and compatibility metadata. Run `bash scripts/package.sh` to build the archive locally. Published artifacts are available from [GitHub Releases](https://github.com/trusttunnel-ui/ttui-panel/releases).
+The **Release** workflow verifies that the tag matches the publication date, reruns the checks, and publishes the archive, SHA-256 checksum, bootstrap script, and compatibility metadata. Run `bash scripts/package.sh` to build the archive locally; it ships minified sources without documentation files. Published artifacts are available from [GitHub Releases](https://github.com/trusttunnel-ui/ttui-panel/releases).
 
 ## Dashboard
 
@@ -134,6 +132,7 @@ Xray receives the destination address, port, and hostname when available. Rules 
 
 | Reference | How ttui uses it |
 | --- | --- |
+| [agentsys-client](https://github.com/smoothie-ws/agentsys-client) | The interface style: borderless controls, derived tones, rounded highlights, dark and light themes. |
 | [wg-easy](https://github.com/wg-easy/wg-easy) | The client list is the landing page, and exports are available from each client's actions. |
 | [3x-ui](https://github.com/MHSanaei/3x-ui/blob/main/docs/content/docs/en/operations/outbounds-routing.mdx) | Named outbounds, ordered rules, geodata, and advanced editing. |
 | [TrustTunnel Endpoint CLI](https://github.com/TrustTunnel/TrustTunnel/blob/v1.3.1/CONFIGURATION.md) | ttui preserves the native TOML files and delegates exports to the endpoint. The endpoint sends traffic through one SOCKS5 outbound to a separate router. |

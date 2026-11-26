@@ -12,12 +12,13 @@ support_units=(ttui-acme.service ttui-acme.timer ttui-metrics.service ttui-metri
 endpoint_tag=v1.3.1
 client_tag=v1.3.0
 xray_tag=v26.11.9
-semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+# Releases are named by publication date: YY.MM.DD.
+version_re='[0-9]{2}\.[0-9]{2}\.[0-9]{2}'
 
 release_info() {
     local version
     version=$(cat "$1/VERSION")
-    [[ $version =~ ^$semver$ ]]
+    [[ $version =~ ^$version_re$ ]]
     cat <<EOF
 {"format":1,"version":"$version","components":{"endpoint":"$endpoint_tag","client":"$client_tag","xray":"$xray_tag"},"systems":["debian","ubuntu"],"architectures":["x86_64","aarch64"],"minimum_python":[3,9]}
 EOF
@@ -36,12 +37,12 @@ with os.fdopen(os.open("/var/lib/ttui/update-request", os.O_RDONLY | os.O_NOFOLL
         sys.exit("Skip an oversized update request.")
     sys.stdout.write(version.decode("ascii"))
 ')
-    if [[ ! $version =~ ^v$semver$ ]]; then
+    if [[ ! $version =~ ^$version_re$ ]]; then
         echo "Invalid update request version." >&2
         return 1
     fi
     installed=$(cat "$panel/VERSION")
-    if ! dpkg --compare-versions "${version#v}" gt "$installed"; then
+    if ! dpkg --compare-versions "$version" gt "$installed"; then
         echo "The requested release is already installed or older." >&2
         return 1
     fi
@@ -113,26 +114,26 @@ fetch_release() (
     shift
     if [[ $version == latest ]]; then
         base="$repository/releases/latest/download"
-    elif [[ $version =~ ^v$semver$ ]]; then
+    elif [[ $version =~ ^$version_re$ ]]; then
         base="$repository/releases/download/$version"
     else
-        echo "Expected latest or a release such as v0.1.0." >&2
+        echo "Expected latest or a release date such as 26.11.26." >&2
         exit 2
     fi
     work=$(mktemp -d)
     trap 'rm -rf -- "$work"' EXIT
-    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.gz" -o "$work/ttui.tar.gz"
-    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.gz.sha256" -o "$work/ttui.tar.gz.sha256"
-    read -r digest filename extra < "$work/ttui.tar.gz.sha256"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.xz" -o "$work/ttui.tar.xz"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.xz.sha256" -o "$work/ttui.tar.xz.sha256"
+    read -r digest filename extra < "$work/ttui.tar.xz.sha256"
     filename=${filename#\*}
-    if [[ ! $digest =~ ^[a-f0-9]{64}$ || $filename != ttui.tar.gz || -n $extra ]]; then
+    if [[ ! $digest =~ ^[a-f0-9]{64}$ || $filename != ttui.tar.xz || -n $extra ]]; then
         echo "Invalid release checksum." >&2
         exit 1
     fi
-    printf '%s *%s\n' "$digest" "$work/ttui.tar.gz" | sha256sum --check --status
+    printf '%s *%s\n' "$digest" "$work/ttui.tar.xz" | sha256sum --check --status
     mkdir "$work/source"
-    tar -xzf "$work/ttui.tar.gz" -C "$work/source"
-    if [[ $version != latest && "v$(cat "$work/source/VERSION")" != "$version" ]]; then
+    tar -xJf "$work/ttui.tar.xz" -C "$work/source"
+    if [[ $version != latest && "$(cat "$work/source/VERSION")" != "$version" ]]; then
         echo "Release asset version mismatch." >&2
         exit 1
     fi
@@ -228,9 +229,9 @@ finish_update() {
 }
 
 main() {
-    local source_dir='' version=latest allow_downgrade=0 newer_only=0 updating=0 target current=unknown
+    local source_dir='' version=latest newer_only=0 updating=0 target current=unknown
     local domain='' access='' adding_https=0 panel_port=8080 port_set=0
-    local -a packages=(ca-certificates curl iproute2 openssl python3 python3-venv sudo unzip util-linux)
+    local -a packages=(ca-certificates curl iproute2 openssl python3 python3-venv sudo unzip util-linux xz-utils)
     local architecture xray_arch endpoint_sha client_sha xray_sha
     local config=/etc/trusttunnel state=/var/lib/ttui
     local -a forwarded=() active=()
@@ -257,13 +258,8 @@ main() {
             --port) panel_port=${2:?Missing panel port}; port_set=1; forwarded+=(--port "$panel_port"); shift ;;
             --local) access=local; forwarded+=(--local) ;;
             --external-proxy) access=external; forwarded+=(--external-proxy) ;;
-            --panel-only)
-                echo "--panel-only was removed because every installation includes the TrustTunnel tools." >&2
-                echo "Use --local for SSH-only access, --domain for managed HTTPS, or --external-proxy for your own proxy." >&2
-                return 2 ;;
-            --allow-downgrade) allow_downgrade=1; forwarded+=(--allow-downgrade) ;;
             --newer-only) newer_only=1; forwarded+=(--newer-only) ;;
-            *) echo "Usage: ttui [update] [--version vX.Y.Z | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT] [--allow-downgrade]" >&2; return 2 ;;
+            *) echo "Usage: ttui [update] [--version YY.MM.DD | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT]" >&2; return 2 ;;
         esac
         shift
     done
@@ -280,7 +276,7 @@ main() {
     exec 9>/run/lock/ttui-install.lock
     flock -n 9 || { echo "Another ttui installation is in progress." >&2; return 1; }
     target=$(cat "$source_dir/VERSION")
-    [[ $target =~ ^$semver$ ]] || {
+    [[ $target =~ ^$version_re$ ]] || {
         echo "Invalid VERSION file." >&2; return 1;
     }
     echo "Installing ttui $target (web panel and TrustTunnel tools)."
@@ -288,12 +284,12 @@ main() {
         updating=1
         if [[ -f $panel/VERSION ]]; then
             current=$(cat "$panel/VERSION")
-            if (( newer_only )) && ! dpkg --compare-versions "$target" gt "$current"; then
-                echo "The requested release is already installed or older." >&2
+            if dpkg --compare-versions "$target" lt "$current"; then
+                echo "Release $target is older than the installed $current." >&2
                 return 1
             fi
-            if (( ! allow_downgrade )) && dpkg --compare-versions "$target" lt "$current"; then
-                echo "Downgrade from $current to $target requires --allow-downgrade." >&2
+            if (( newer_only )) && ! dpkg --compare-versions "$target" gt "$current"; then
+                echo "The requested release is already installed or older." >&2
                 return 1
             fi
         fi
@@ -422,7 +418,7 @@ main() {
     install -m 0644 "$source_dir"/templates/*.html "$panel/templates/"
     install -m 0644 "$source_dir"/static/* "$panel/static/"
     python3 -m venv "$panel/venv"
-    "$panel/venv/bin/python" -m pip install --disable-pip-version-check -r "$panel/requirements.txt"
+    "$panel/venv/bin/python" -m pip install --disable-pip-version-check --no-compile -r "$panel/requirements.txt"
     chmod -R a+rX "$panel/venv"
     install -m 0644 "$source_dir"/systemd/*.service "$units/"
     install -m 0644 "$source_dir"/systemd/*.timer "$units/"

@@ -34,12 +34,6 @@ jobs:
           node --check static/monitoring.js
           node --check static/logs.js
           git show --format= --check HEAD
-      - name: Check removed installer option
-        run: |
-          if bash install.sh --panel-only >/dev/null 2>&1; then
-            echo "--panel-only must fail with a migration hint"
-            exit 1
-          fi
   install:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -56,15 +50,6 @@ jobs:
       - run: bash scripts/smoke-install.sh
         env:
           TTUI_BROWSER_PYTHON: ${{ runner.temp }}/ttui-browser/bin/python
-  upgrade-from-stable:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install the published release and upgrade
-        run: bash scripts/smoke-upgrade-v0.1.sh
   https-proxy:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

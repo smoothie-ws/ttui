@@ -9,6 +9,7 @@ User=ttui
 Group=ttui
 WorkingDirectory=/opt/ttui
 Environment=TTUI_STATE=/var/lib/ttui
+Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile=-/etc/default/ttui
 ExecStart=/opt/ttui/venv/bin/python /opt/ttui/app.py
 ExecStartPost=/opt/ttui/venv/bin/python /opt/ttui/app.py --verify-panel-http

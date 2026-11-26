@@ -17,10 +17,10 @@ class ActivityTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def test_newest_events_are_returned_first_with_labels(self):
-        activity.record("save_server", "completed", "192.0.2.10")
+        activity.record("save_source", "completed", "192.0.2.10")
         activity.record("updates", "rejected", "2001:db8::1")
         events = activity.recent()
-        self.assertEqual([event["action"] for event in events], ["updates", "save_server"])
+        self.assertEqual([event["action"] for event in events], ["updates", "save_source"])
         self.assertEqual(events[0]["label"], "Update operation")
         self.assertEqual(events[0]["result"], "rejected")
         self.assertEqual(events[0]["address"], "2001:db8::1")
@@ -41,5 +41,5 @@ class ActivityTest(unittest.TestCase):
         blocker = self.state / "blocked"
         blocker.write_text("", encoding="utf-8")
         with patch.object(b, "STATE", blocker / "child"):
-            activity.record("save_server")
+            activity.record("save_source")
         self.assertTrue(blocker.is_file())

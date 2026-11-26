@@ -452,14 +452,6 @@ def index():
                            count=count, page=page, pages=pages, stats=stats, limit_fields=LIMIT_FIELDS,
                            metrics_unavailable=metrics_unavailable)
 
-@app.get("/monitoring")
-def monitoring():
-    """Old links keep working; history and service state live on the dashboard."""
-    period = request.args.get("period", "24h")
-    if period not in PERIODS:
-        abort(400)
-    return redirect(url_for("dashboard", period=period))
-
 @app.get("/logs")
 def logs():
     source = request.args.get("source", "panel")
@@ -647,11 +639,6 @@ def render_setup_page():
                            default_endpoint_port=8443 if PUBLIC_HTTPS else 443,
                            quick_hostname=quick_setup_hostname())
 
-@app.get("/server")
-def server():
-    """Keep old links working; the TrustTunnel page is now /endpoint."""
-    return endpoint()
-
 @app.route("/endpoint", methods=["GET", "POST"])
 @action("endpoint")
 def endpoint():
@@ -735,9 +722,9 @@ def filters():
     return render_template("filters.html", rows=rows, filename=path.relative_to(b.CONFIG).as_posix(), enabled=enabled,
                            revision=revision(original), candidate=candidate_id, preview=preview)
 
-@app.post("/server")
+@app.post("/endpoint/source")
 @action("endpoint")
-def save_server():
+def save_source():
     data = {key: request.form.get(key, "").replace("\r\n", "\n").replace("\r", "\n") for key in FILE_KEYS}
     before, old_paths, previous = server_sources()
     check_revision(previous)
