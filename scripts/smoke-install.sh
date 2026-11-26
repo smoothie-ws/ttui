@@ -120,6 +120,9 @@ parts.append(f"--{boundary}--\r\n".encode())
 upload = Request(base + "/geofiles", b"".join(parts),
                  {"Content-Type": f"multipart/form-data; boundary={boundary}"})
 assert "Geodata file saved." in client.open(upload, timeout=30).read().decode()
+checked = submit("/geofiles/verify", get("/routing"), name="smoke.dat", sha256=hashlib.sha256(geo_data).hexdigest())
+assert "(verified)." in checked
+assert "checksum does not match" in submit("/geofiles/verify", checked, name="smoke.dat", sha256="0" * 64)
 before_backup = get("/backups")
 geo_backup = submit("/backups", before_backup, operation="create", component="geo")
 assert "Backup created." in geo_backup

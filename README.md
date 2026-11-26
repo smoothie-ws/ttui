@@ -112,7 +112,7 @@ The installer stops if it finds an unmanaged `trusttunnel.service`. To migrate a
 | IP | `203.0.113.0/24`, `geoip:private`, `ext:custom-ip.dat:group` |
 | Ports | `80,443,1000-2000` |
 
-Upload additional Xray `.dat` databases under **Geodata files**. An optional SHA-256 value verifies uploads before replacement. Xray provides the default `geosite.dat` and `geoip.dat` files. Use **Validate in Xray** to inspect a draft without applying it. The JSON editor supports advanced rule fields and nested outbound settings.
+Upload additional Xray `.dat` databases under **Geodata files**. An optional SHA-256 value verifies uploads before replacement. Use **Verify SHA-256** to calculate a stored file's checksum or compare it with an expected value. Xray provides the default `geosite.dat` and `geoip.dat` files. Use **Validate in Xray** to inspect a draft without applying it. The JSON editor supports advanced rule fields and nested outbound settings.
 
 Xray receives the destination address, port, and hostname when available. Rules apply to all clients through the shared SOCKS5 inbound. Use IP rules for connections without an available hostname. UDP support depends on the outbound. HTTP proxies handle TCP.
 

@@ -49,7 +49,14 @@
   {% if geofiles %}
   <div class="host-list">
     {% for file in geofiles %}
-    <div><strong>{{ file.name }}</strong> <span class="subtle">{{ '%.1f MiB'|format(file.size / 1048576) }} · <time datetime="{{ file.updated }}">{{ file.updated }}</time></span></div>
+    <div class="stack"><div><strong>{{ file.name }}</strong> <span class="subtle">{{ '%.1f MiB'|format(file.size / 1048576) }} · <time datetime="{{ file.updated }}">{{ file.updated }}</time></span></div>
+      <details><summary>Verify SHA-256</summary>
+        <form class="row" method="post" action="{{ url_for('verify_geo') }}">{{ token() }}<input type="hidden" name="name" value="{{ file.name }}">
+          <label>Expected SHA-256 <input name="sha256" maxlength="64" spellcheck="false" placeholder="Optional"></label>
+          <button>Calculate or verify</button>
+        </form>
+      </details>
+    </div>
     {% endfor %}
   </div>
   {% endif %}

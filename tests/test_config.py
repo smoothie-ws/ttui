@@ -492,6 +492,20 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(b.read(b.VPN), original)
         self.service.assert_called_once_with("restart", b.ROUTER_UNIT)
 
+    def test_geofile_checksum_can_be_checked_without_changing_the_file(self):
+        b.GEO.mkdir()
+        path = b.GEO / "custom.dat"
+        path.write_bytes(b"geodata")
+        with patch.dict(panel.app.config, SECRET_KEY="secret"):
+            for fields, message in (({"name": "custom.dat"}, "SHA-256"),
+                                    ({"name": "custom.dat", "sha256": "0" * 64}, "does not match"),
+                                    ({"name": "../custom.dat"}, "valid geodata")):
+                with self.subTest(fields=fields), panel.app.test_request_context("/geofiles/verify", method="POST", data=fields):
+                    self.assertEqual(panel.verify_geo().status_code, 302)
+                    self.assertIn(message, panel.session["_flashes"][0][1])
+        self.assertEqual(path.read_bytes(), b"geodata")
+        self.service.assert_not_called()
+
     def test_invalid_geofile_does_not_restart_running_router(self):
         b.write_json(b.ROUTING, {**DEFAULT_ROUTING, "enabled": True})
         b.GEO.mkdir()

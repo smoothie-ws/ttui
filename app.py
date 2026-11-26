@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import secrets
+import stat
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -897,6 +898,31 @@ def upload_geo():
         upload.stream.seek(0)
     b.replace_geofile(upload.filename, upload.stream)
     return saved("routing", "Geodata file saved.")
+
+
+@app.post("/geofiles/verify")
+@action("routing")
+def verify_geo():
+    name = request.form.get("name", "")
+    expected = request.form.get("sha256", "").strip().lower()
+    if not b.GEOFILE_NAME.fullmatch(name):
+        raise ValueError("Select a valid geodata file.")
+    if expected and not re.fullmatch(r"[a-f0-9]{64}", expected):
+        raise ValueError("Enter a 64-character SHA-256 checksum.")
+    path = b.GEO / name
+    if path.is_symlink():
+        raise ValueError("Geodata files cannot be symbolic links.")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise ValueError("Select a regular geodata file.")
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: source.read(128 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if expected and not hmac.compare_digest(expected, actual):
+        raise ValueError(f"{name}: SHA-256 checksum does not match.")
+    return saved("routing", f"{name}: SHA-256 {actual}" + (" (verified)." if expected else "."))
 
 
 @app.get("/settings")
