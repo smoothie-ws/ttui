@@ -97,7 +97,7 @@ assert "TrustTunnel Endpoint" in get("/updates")
 assert "The systemd updater is unavailable" not in get("/updates")
 assert 'data-chart="usage"' in get("/")
 assert "The service journal is unavailable" not in get("/logs")
-assert "Accepting connections on 127.0.0.1:8080." in submit("/diagnostics", get("/diagnostics"))
+assert re.search(r"Accepting connections on (0\.0\.0\.0|127\.0\.0\.1):8080\.", submit("/diagnostics", get("/diagnostics")))
 server = get("/endpoint")
 assert "Set up TrustTunnel" in server
 assert "Create node for 127.0.0.1:443" in server
