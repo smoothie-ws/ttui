@@ -11,19 +11,29 @@ Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64
 One command works on a fresh Debian or Ubuntu server; no domain, prompts, or DNS records are needed:
 
 ```bash
-curl -fsSL https://github.com/trusttunnel-ui/ttui-panel/releases/latest/download/bootstrap.sh | sudo bash
+curl -fsSL -o /tmp/ttui-bootstrap.sh https://github.com/trusttunnel-ui/ttui-panel/releases/latest/download/bootstrap.sh
+sudo bash /tmp/ttui-bootstrap.sh
 ```
 
-The installer starts the panel on `http://SERVER-IP:8080/ttui/` (open TCP 8080 in the firewall), prints the sign-in URL, and generates the administrator credentials. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. The VPN endpoint stays unconfigured until you create it in the browser.
+The installer prints a box with the panel URL, username, and password, and saves them to `/root/ttui-signin.txt`. It starts the panel on `http://SERVER-IP:8080/ttui/` and installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. The VPN endpoint stays unconfigured until you create it in the browser.
+
+If nothing appears, the download failed before the installer ran: check the `curl` output and your network. Run `sudo ttui info` at any time to print the panel URL again.
 
 Open the printed URL, sign in, open **TrustTunnel**, and press **Create node**. On an IP-only server the node uses the server address for clients and a self-signed certificate, so exports work without a domain. Open the endpoint TCP port, and UDP for HTTP/3. After setup, go to **Clients** to export the first connection.
+
+If the URL does not open, allow TCP 8080 in the cloud/host firewall. Without opening a port, install with `--local` and tunnel it:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 USER@SERVER
+```
 
 ### Install with managed HTTPS
 
 Point the domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy:
 
 ```bash
-curl -fsSL https://github.com/trusttunnel-ui/ttui-panel/releases/latest/download/bootstrap.sh | sudo bash -s -- --domain panel.example.com
+curl -fsSL -o /tmp/ttui-bootstrap.sh https://github.com/trusttunnel-ui/ttui-panel/releases/latest/download/bootstrap.sh
+sudo bash /tmp/ttui-bootstrap.sh --domain panel.example.com
 ```
 
 The installer starts the web panel and prints its HTTPS URL and sign-in details. When the panel is opened through its DNS name, **Create node** configures the endpoint on that same hostname. The custom form still accepts a separate VPN hostname, listen address, port, and username, and can reuse an existing certificate. TrustTunnel includes the generated certificate in client exports, so clients can verify the endpoint.

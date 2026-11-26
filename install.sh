@@ -74,6 +74,14 @@ check_panel_port() {
     fi
 }
 
+public_ip() {
+    local ip=''
+    ip=$(curl -4 -fsS --max-time 4 https://api.ipify.org 2>/dev/null) || true
+    [[ -n $ip ]] || ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -n $ip ]] || ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
+    printf '%s' "${ip:-SERVER-IP}"
+}
+
 start_panel_https() {
     local domain=$1 port=$2
     cat >/etc/caddy/Caddyfile <<EOF
@@ -235,7 +243,7 @@ main() {
     local architecture xray_arch endpoint_sha client_sha xray_sha
     local config=/etc/trusttunnel state=/var/lib/ttui
     local -a forwarded=() active=()
-    local unit file directory credentials
+    local unit file directory credentials bind port
     if [[ $# == 1 && $1 == --release-info ]]; then
         release_info "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
         return
@@ -249,6 +257,27 @@ main() {
         if [[ -r $panel/VERSION ]]; then cat "$panel/VERSION"; else echo "ttui version unavailable." >&2; return 1; fi
         return
     fi
+    if [[ ${1:-} == info || ( $# == 1 && ${1:-} == --info ) ]]; then
+        if [[ ! -r $panel/VERSION ]]; then echo "ttui is not installed." >&2; return 1; fi
+        bind=$(sed -n 's/^TTUI_BIND=//p' /etc/default/ttui 2>/dev/null | tail -n 1) || true
+        port=$(sed -n 's/^TTUI_PORT=//p' /etc/default/ttui 2>/dev/null | tail -n 1) || true
+        bind=${bind:-0.0.0.0}
+        port=${port:-8080}
+        echo "ttui $(cat "$panel/VERSION")"
+        if [[ $bind == 127.0.0.1 || $bind == ::1 ]]; then
+            echo "Panel: http://127.0.0.1:$port/ttui/"
+            echo "SSH tunnel: ssh -L $port:127.0.0.1:$port USER@SERVER"
+        elif [[ $bind == 0.0.0.0 || $bind == :: ]]; then
+            echo "Panel: http://$(public_ip):$port/ttui/"
+            echo "Open TCP $port in the cloud/host firewall if it is unreachable."
+        else
+            echo "Panel: http://$bind:$port/ttui/"
+        fi
+        if [[ -r /root/ttui-signin.txt ]]; then
+            echo "Credentials: sudo cat /root/ttui-signin.txt"
+        fi
+        return
+    fi
     if [[ ${1:-} == update ]]; then shift; fi
     while (( $# )); do
         case "$1" in
@@ -259,7 +288,7 @@ main() {
             --local) access=local; forwarded+=(--local) ;;
             --external-proxy) access=external; forwarded+=(--external-proxy) ;;
             --newer-only) newer_only=1; forwarded+=(--newer-only) ;;
-            *) echo "Usage: ttui [update] [--version YY.MM.DD | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT]" >&2; return 2 ;;
+            *) echo "Usage: ttui [info|version|update] [--version YY.MM.DD | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT]" >&2; return 2 ;;
         esac
         shift
     done
@@ -322,6 +351,8 @@ main() {
         adding_https=1
     elif [[ $access == external ]]; then
         adding_https=1
+    elif (( ! updating )) && [[ $access == ip ]]; then
+        echo "No domain given: installing the panel on port $panel_port over HTTP."
     fi
     if [[ ( -e $launcher || -L $launcher ) && $(readlink "$launcher") != "$panel/install.sh" ]]; then
         echo "An unmanaged $launcher already exists." >&2
@@ -440,45 +471,67 @@ main() {
             /etc/default/ttui >"$work/ttui.default"
         install -m 0644 "$work/ttui.default" /etc/default/ttui
         credentials=$(runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init)
-        echo
-        echo "ttui web panel sign-in"
+        panel_url=''
         if [[ -n $domain ]]; then
-            echo "Sign-in URL: https://$domain/ttui/"
-        elif [[ $access == external ]]; then
-            echo "Point your HTTPS reverse proxy at http://127.0.0.1:$panel_port and open /ttui/ on your HTTPS origin."
+            panel_url="https://$domain/ttui/"
+        elif [[ $access == ip ]]; then
+            panel_url="http://$(public_ip):$panel_port/ttui/"
         elif [[ $access == local ]]; then
-            echo "Sign-in URL: http://127.0.0.1:$panel_port/ttui/"
-            echo "Remote access: ssh -L $panel_port:127.0.0.1:$panel_port USER@SERVER"
-        else
-            server_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-            [[ -n $server_ip ]] || server_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
-            echo "Sign-in URL: http://${server_ip:-SERVER-IP}:$panel_port/ttui/"
-            echo "Open TCP $panel_port in the host firewall for remote access."
-            echo "Plain HTTP: pass --domain for HTTPS, or --local for SSH-only access."
+            panel_url="http://127.0.0.1:$panel_port/ttui/"
         fi
         runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --panel-info
-        if [[ -n $credentials ]]; then
-            echo "Save these administrator credentials (path | username | password):"
-            printf '%s\n' "$credentials"
-        else
-            echo "The existing administrator password was kept."
-        fi
-        echo "Password reset: sudo -u ttui env TTUI_STATE=$state $panel/venv/bin/python $panel/app.py --reset-login"
         echo
         systemctl enable ttui.service trusttunnel.service
-        systemctl restart ttui.service
-        wait_service ttui.service
+        panel_state=ok
+        if ! systemctl restart ttui.service || ! wait_service ttui.service; then
+            panel_state=failed
+        fi
         ln -sfn "$panel/install.sh" "$launcher"
-        echo "ttui web panel is running."
-        if [[ -n $domain ]]; then start_panel_https "$domain" "$panel_port"; fi
+        if [[ -n $domain ]]; then
+            if ! start_panel_https "$domain" "$panel_port"; then
+                panel_state=failed
+            fi
+        fi
         if [[ -f "$config/vpn.toml" && -f "$config/hosts.toml" ]]; then
             if ! systemctl restart trusttunnel.service || ! wait_service trusttunnel.service; then
-                echo "TrustTunnel failed to start. The ttui panel is still running. Check journalctl -u trusttunnel.service." >&2
-                exit 1
+                echo "TrustTunnel failed to start. The panel is still running. Check journalctl -u trusttunnel.service." >&2
             fi
-        else
-            echo "Sign in and open TrustTunnel to create the VPN node."
         fi
+        {
+            echo "ttui $target"
+            if [[ -n $panel_url ]]; then echo "Panel: $panel_url"; fi
+            if [[ $access == external ]]; then echo "Panel: /ttui/ on your HTTPS origin (proxy to http://127.0.0.1:$panel_port)"; fi
+            if [[ -n $credentials ]]; then printf '%s\n' "$credentials"; else echo "Existing administrator password kept."; fi
+        } >/root/ttui-signin.txt
+        chmod 600 /root/ttui-signin.txt
+        echo
+        echo "============================================================"
+        echo " ttui $target is installed"
+        if [[ -n $panel_url ]]; then
+            echo " Open in a browser:  $panel_url"
+        elif [[ $access == external ]]; then
+            echo " Open /ttui/ on your HTTPS origin (proxy -> 127.0.0.1:$panel_port)."
+        fi
+        if [[ -n $credentials ]]; then
+            echo " Username:           admin"
+            echo " Password:           ${credentials##*| }"
+        else
+            echo " Sign-in:            existing administrator password kept."
+        fi
+        echo " Saved to:           /root/ttui-signin.txt"
+        if [[ $panel_state == failed ]]; then
+            echo " WARNING: the panel service did not start." >&2
+            echo " Check: journalctl -u ttui.service" >&2
+        fi
+        if [[ $access == ip ]]; then
+            echo " Not reachable? Open TCP $panel_port in the cloud/host firewall,"
+            echo " or reinstall with --local and use: ssh -L $panel_port:127.0.0.1:$panel_port USER@SERVER"
+        elif [[ $access == local ]]; then
+            echo " SSH tunnel: ssh -L $panel_port:127.0.0.1:$panel_port USER@SERVER"
+        fi
+        echo "============================================================"
+        echo " Later: sudo ttui info"
+        echo
     fi
     for unit in "${active[@]}"; do
         systemctl restart "$unit"
@@ -487,7 +540,7 @@ main() {
     ln -sfn "$panel/install.sh" "$launcher"
     systemctl enable --now ttui-metrics.timer ttui-backups.timer
     )
-    echo "ttui $target installed."
+    echo "ttui $target installed. Open the panel with: sudo ttui info"
 }
 
 main "$@"
