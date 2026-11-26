@@ -54,7 +54,7 @@ with sync_playwright() as playwright:
     expect(page.get_by_text("This hostname already exists in another TLS host entry.")).to_be_visible()
     page.goto(base + "/routing")
     page.get_by_role("button", name="Add outbound").click()
-    page.get_by_label("Outbound name").fill("browser-proxy")
+    page.get_by_label("Outbound name").last.fill("browser-proxy")
     page.get_by_label("Proxy address").fill("127.0.0.1")
     page.get_by_label("Port", exact=True).fill("1080")
     page.get_by_role("button", name="Add rule").click()
@@ -62,7 +62,7 @@ with sync_playwright() as playwright:
     page.get_by_label("Domains, one per line").last.fill(r"regexp:^browser\.example$")
     page.get_by_role("button", name="Apply routing").click()
     expect(page.get_by_text("Routing settings saved.")).to_be_visible()
-    expect(page.get_by_label("Outbound name")).to_have_value("browser-proxy")
+    expect(page.get_by_label("Outbound name").last).to_have_value("browser-proxy")
     expect(page.get_by_label("Domains, one per line").last).to_have_value(r"regexp:^browser\.example$")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "Mobile page overflows horizontally"
     browser.close()

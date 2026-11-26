@@ -60,6 +60,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tomllib
@@ -190,36 +191,76 @@ with socket.socket() as reservation:
 config_file = Path(sys.argv[1]).with_name("smoke-client.toml")
 config_file.write_text(f'vpn_mode = "general"\n[listener.socks]\naddress = "127.0.0.1:{socks_port}"\n'
                        f'[endpoint]\n{config_text}', encoding="utf-8")
-with http.server.HTTPServer(("127.0.0.1", 0), TestOrigin) as origin:
-    thread = threading.Thread(target=origin.serve_forever, daemon=True)
-    thread.start()
-    process = subprocess.Popen(["/opt/ttui/trusttunnel_client", "--config", str(config_file)],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        deadline = time.monotonic() + 20
-        while True:
-            if process.poll() is not None:
-                raise AssertionError("TrustTunnel client exited before its SOCKS listener was ready")
-            try:
-                with socket.create_connection(("127.0.0.1", socks_port), timeout=1):
-                    break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise AssertionError("TrustTunnel client SOCKS listener did not start")
-                time.sleep(0.2)
-        body = subprocess.check_output(["curl", "--fail", "--silent", "--show-error", "--max-time", "15",
-                                        "--noproxy", "", "--socks5-hostname", f"127.0.0.1:{socks_port}",
-                                        f"http://127.0.0.1:{origin.server_port}/"])
-        assert body == b"trusttunnel-smoke-ok", "VPN did not deliver traffic to the test origin"
-    finally:
-        process.terminate()
+def wait_listener(port, process):
+    deadline = time.monotonic() + 20
+    while True:
+        if process.poll() is not None:
+            raise AssertionError("TrustTunnel process exited before its listener was ready")
         try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        origin.shutdown()
-        thread.join()
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise AssertionError("TrustTunnel listener did not start")
+            time.sleep(0.2)
+
+def stop(process):
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+def exercise_vpn():
+    with http.server.HTTPServer(("127.0.0.1", 0), TestOrigin) as origin:
+        thread = threading.Thread(target=origin.serve_forever, daemon=True)
+        thread.start()
+        process = subprocess.Popen(["/opt/ttui/trusttunnel_client", "--config", str(config_file)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            wait_listener(socks_port, process)
+            body = subprocess.check_output(["curl", "--fail", "--silent", "--show-error", "--max-time", "15",
+                                            "--noproxy", "", "--socks5-hostname", f"127.0.0.1:{socks_port}",
+                                            f"http://127.0.0.1:{origin.server_port}/"])
+            assert body == b"trusttunnel-smoke-ok", "VPN did not deliver traffic to the test origin"
+        finally:
+            stop(process)
+            origin.shutdown()
+            thread.join()
+
+exercise_vpn()
+with tempfile.TemporaryDirectory(dir=Path(sys.argv[1]).parent, prefix="cascade-") as directory:
+    root = Path(directory)
+    for filename in ("endpoint-cert.pem", "endpoint-key.pem"):
+        (root / filename).write_bytes(subprocess.check_output(["sudo", "-u", "ttui", "cat", "/etc/trusttunnel/" + filename]))
+    remote = tomllib.loads(config_text)
+    (root / "credentials.toml").write_text(
+        f'[[client]]\nusername = {json.dumps(remote["username"])}\npassword = {json.dumps(remote["password"])}\n')
+    (root / "hosts.toml").write_text(
+        f'[[main_hosts]]\nhostname = "smoke.example"\ncert_chain_path = {json.dumps(str(root / "endpoint-cert.pem"))}\n'
+        f'private_key_path = {json.dumps(str(root / "endpoint-key.pem"))}\n')
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        remote_port = reservation.getsockname()[1]
+    (root / "vpn.toml").write_text(
+        f'listen_address = "127.0.0.1:{remote_port}"\ncredentials_file = {json.dumps(str(root / "credentials.toml"))}\n'
+        'allow_private_network_connections = true\n[listen_protocols.http2]\n')
+    upstream = subprocess.Popen(["/opt/trusttunnel/trusttunnel_endpoint", str(root / "vpn.toml"), str(root / "hosts.toml")],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        wait_listener(remote_port, upstream)
+        remote["addresses"] = [f"127.0.0.1:{remote_port}"]
+        routing_spec = {"enabled": True, "domainStrategy": "IPIfNonMatch", "default": "cascade",
+                        "outbounds": [{"tag": "cascade", "protocol": "trusttunnel", "endpoint": remote}], "rules": []}
+        routing_page = get("/routing")
+        routing_revision = re.search(r'name="revision" value="([^\"]+)"', routing_page)[1]
+        assert "Routing settings saved." in submit("/routing", routing_page, operation="apply", revision=routing_revision,
+                                                   spec=json.dumps(routing_spec))
+        exercise_vpn()
+    finally:
+        stop(upstream)
 routing_page = get("/routing")
 routing_revision = re.search(r'name="revision" value="([^\"]+)"', routing_page)[1]
 routing_spec["enabled"] = False
