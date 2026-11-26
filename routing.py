@@ -17,7 +17,6 @@ FIRST_CASCADE_PORT = 19100
 DEFAULT_ROUTING = {"enabled": False, "domainStrategy": "IPIfNonMatch",
                    "default": "direct", "outbounds": [], "rules": []}
 
-
 def compile_routing(spec):
     if not isinstance(spec, dict) or type(spec.get("enabled")) is not bool:
         raise ValueError("Set enabled to true or false in the routing configuration.")
@@ -39,18 +38,25 @@ def compile_routing(spec):
         if protocol == "trusttunnel":
             if len(cascades) >= 32:
                 raise ValueError("Up to 32 cascades are supported.")
-            raw = outbound.get("config")
-            if not isinstance(raw, str):
-                raise ValueError(f"{tag}: a TrustTunnel TOML configuration is required.")
-            client = tomlkit.parse(raw)
-            # An endpoint export and a full CLI configuration use different shapes.
-            if "endpoint" not in client:
-                client = tomlkit.document().append("endpoint", client)
+            if "endpoint" in outbound:
+                if not isinstance(outbound["endpoint"], dict):
+                    raise ValueError(f"{tag}: provide a TrustTunnel endpoint object.")
+                client = tomlkit.document().append("endpoint", outbound["endpoint"])
+            else:
+                raw = outbound.get("config")
+                if not isinstance(raw, str):
+                    raise ValueError(f"{tag}: provide TrustTunnel connection settings.")
+                client = tomlkit.parse(raw)
+                # An endpoint export and a full CLI configuration use different shapes.
+                if "endpoint" not in client:
+                    client = tomlkit.document().append("endpoint", client)
             endpoint = client["endpoint"]
             if not isinstance(endpoint, dict):
                 raise ValueError(f"{tag}: an endpoint table is required.")
             if not all(
-                endpoint.get(key) for key in ("hostname", "addresses", "username", "password")
+                isinstance(endpoint.get(key), str) and endpoint[key] for key in ("hostname", "username", "password")
+            ) or not isinstance(endpoint.get("addresses"), list) or not endpoint["addresses"] or not all(
+                isinstance(address, str) and address for address in endpoint["addresses"]
             ):
                 raise ValueError(f"{tag}: provide hostname, addresses, username, and password.")
             if endpoint.get("client_random_prefix") and not endpoint.get("client_random"):
@@ -93,10 +99,8 @@ def compile_routing(spec):
         "routing": {"domainStrategy": strategy, "rules": rules},
     }, cascades
 
-
 def xray_env(assets):
     return {**os.environ, "XRAY_LOCATION_ASSET": str(assets)}
-
 
 def wait_listener(port, process, timeout=12):
     deadline = time.monotonic() + timeout
@@ -107,7 +111,6 @@ def wait_listener(port, process, timeout=12):
         except OSError:
             time.sleep(0.15)
     raise RuntimeError(f"The local SOCKS5 listener on port {port} failed to start.")
-
 
 def run_router(state, xray, client_binary):
     spec = json.loads((state / "routing.json").read_text(encoding="utf-8"))
@@ -120,7 +123,9 @@ def run_router(state, xray, client_binary):
     def stop(*_):
         sys.exit(0)
 
-    def start(port, *args):
+    def start(port, identifier, *args):
+        if env.get("JOURNAL_STREAM"):
+            args = ("/usr/bin/systemd-cat", f"--identifier={identifier}", "--stderr-priority=err", *args)
         processes[port] = subprocess.Popen(args, cwd=state, env=env)
 
     signal.signal(signal.SIGTERM, stop)
@@ -130,10 +135,10 @@ def run_router(state, xray, client_binary):
             for port, data in cascades.items():
                 path = work / f"cascade-{port}.toml"
                 path.write_text(data, encoding="utf-8")
-                start(port, client_binary, "--config", str(path))
+                start(port, "ttui-cascade", client_binary, "--config", str(path))
             path = work / "xray.json"
             path.write_text(json.dumps(config), encoding="utf-8")
-            start(int(ROUTER_ADDRESS.rsplit(":", 1)[1]), xray, "run", "-c", str(path))
+            start(int(ROUTER_ADDRESS.rsplit(":", 1)[1]), "ttui-xray", xray, "run", "-c", str(path))
             deadline = time.monotonic() + 50
             for port, process in processes.items():
                 wait_listener(port, process, max(0, deadline - time.monotonic()))
@@ -154,7 +159,6 @@ def run_router(state, xray, client_binary):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-
 
 if __name__ == "__main__":
     run_router(Path(sys.argv[1]).resolve(), *sys.argv[2:])

@@ -1,15 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Sign in{% endblock %}
 {% block content %}
-<section class="card login-card">
-  <p class="brand">ttui</p>
+<div class="login-card">
+  <div class="login-brand">
+    <span class="brand">ttui</span>
+    {{ theme_toggle() }}
+  </div>
   <h1>Sign in to the panel</h1>
   {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
   <form class="stack" method="post" action="{{ url_for('login') }}">
     {{ token() }}
     <label>Username <input name="username" autocomplete="username" required maxlength="64" autofocus></label>
     <label>Password <input type="password" name="password" autocomplete="current-password" required maxlength="256"></label>
+    <label>Authenticator code (if enabled) <input name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"></label>
     <button class="primary">Sign in</button>
   </form>
-</section>
+</div>
 {% endblock %}

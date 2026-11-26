@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block scripts %}<script defer src="{{ url_for('static', filename='monitoring.js') }}"></script>{% endblock %}
+{% block content %}
+{% macro state_badge(state) %}
+{% set labels = {'active': 'Running', 'inactive': 'Stopped', 'failed': 'Failed', 'unconfigured': 'Not configured',
+                 'activating': 'Starting', 'deactivating': 'Stopping', 'disabled': 'Disabled'} %}
+<span class="status{% if state == 'active' %} online{% elif state in ('failed', 'inactive') %} danger{% endif %}">{{ labels.get(state, state|capitalize) }}</span>
+{% endmacro %}
+{{ heading('Dashboard', 'Service status and recent activity for this installation.', 'ttui ' ~ version) }}
+<section class="section">
+  <div class="section-head"><h2>Services</h2><a href="{{ url_for('diagnostics') }}">Run diagnostics</a></div>
+  <div class="table-scroll">
+    <table aria-label="Services">
+      <thead><tr><th>Service</th><th>Status</th><th class="actions-cell">Actions</th></tr></thead>
+      <tbody>
+        {% for service in services %}
+        <tr>
+          <td class="cell-main">{{ service.name }}</td>
+          <td>{{ state_badge(service.state) }}</td>
+          <td class="actions-cell">
+            <div class="actions">
+              {% if service.href %}<a class="button small quiet" href="{{ service.href }}">{{ 'Set up TrustTunnel' if service.state == 'unconfigured' else 'Settings' }}</a>{% endif %}
+              {% if service.unit %}
+              <form method="post" action="{{ url_for('restart_service') }}" data-confirm="Restart {{ service.name }}? Active connections may reconnect.">
+                {{ token() }}<input type="hidden" name="unit" value="{{ service.unit }}">
+                <button class="small">Restart</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h2>Node readiness</h2>
+    <span class="status{% if ready %} online{% endif %}">{{ 'Ready' if ready else 'Needs attention' }}</span>
+  </div>
+  <ul class="checklist">
+    {% for check in checks %}
+    <li class="{% if check.ok %}ok{% else %}todo{% endif %}">
+      <span aria-hidden="true">{{ '✓' if check.ok else '○' }}</span>
+      <a href="{{ check.href }}">{{ check.label }}</a>
+      {% if not check.required %}<span class="subtle">optional</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+<div class="columns">
+  <section class="section">
+    <div class="section-head"><h2>Host resources</h2></div>
+    <dl>
+      <dt>CPU usage</dt><dd>{{ (metrics.cpu ~ '%') if metrics.cpu is not none else 'Unavailable' }}</dd>
+      <dt>RAM usage</dt><dd>{{ (metrics.ram ~ '%') if metrics.ram is not none else 'Unavailable' }}</dd>
+      <dt>Free space for panel data</dt><dd>{{ '%.2f GiB'|format(metrics.disk / 1073741824) if metrics.disk is not none else 'Unavailable' }}</dd>
+      <dt>Host uptime</dt><dd>{{ '%dd %dh %dm'|format(metrics.uptime // 86400, metrics.uptime // 3600 % 24, metrics.uptime // 60 % 60) if metrics.uptime is not none else 'Unavailable' }}</dd>
+    </dl>
+    <p class="separate"><a href="#traffic">Open resource history</a></p>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Connections</h2></div>
+    <dl>
+      <dt>Configured clients</dt><dd>{{ clients if clients is not none else 'Unavailable' }}</dd>
+      {% if connected is not none %}<dt>Connected client accounts</dt><dd>{{ connected }}</dd>{% endif %}
+      <dt>Host network totals since boot</dt>
+      <dd>{{ ('%.2f GiB received, %.2f GiB sent'|format(metrics.traffic[0] / 1073741824, metrics.traffic[1] / 1073741824)) if metrics.traffic is not none else 'Unavailable' }}</dd>
+    </dl>
+    <p class="separate"><a href="{{ url_for('index') }}">Manage clients</a></p>
+  </section>
+</div>
+<section class="section" id="traffic">
+  <div class="section-head"><h2>Traffic and load</h2>
+    <nav class="periods" aria-label="History range">
+      {% for item in periods %}<a href="{{ url_for('dashboard', period=item) }}" {% if item == period %}aria-current="page"{% endif %}>{{ item }}</a>{% endfor %}
+    </nav>
+  </div>
+  {% if samples %}
+  <div id="history-data" data-points="{{ samples|tojson|forceescape }}">
+    <div class="chart-grid">
+      <div><h3>CPU and RAM (%)</h3><canvas data-chart="usage" role="img" aria-label="CPU and RAM usage history"></canvas></div>
+      <div><h3>Host traffic (KiB/s)</h3><canvas data-chart="traffic" role="img" aria-label="Host network traffic received and sent"></canvas></div>
+    </div>
+  </div>
+  {% else %}
+  <p class="notice">No samples yet. The metrics service records one sample per minute; history appears after the first interval.</p>
+  {% endif %}
+</section>
+<div class="columns">
+  <section class="section">
+    <div class="section-head"><h2>Certificates</h2><a href="{{ url_for('tls_hosts') }}">Manage TLS</a></div>
+    {% if certificates %}
+    <p class="subtle">{{ certificates|length }} managed certificate{{ '' if certificates|length == 1 else 's' }}{% if expiring %}, <span class="danger">{{ expiring }} need{{ 's' if expiring == 1 else '' }} attention</span>{% endif %}.</p>
+    <ul class="event-list">
+      {% for item in certificates %}
+      <li>
+        <span>{{ item.hostname or 'Unnamed host' }}</span>
+        {% if item.status is none %}<span class="status danger">Unavailable</span>
+        {% elif item.status.days < 0 %}<span class="status danger">Expired</span>
+        {% elif item.status.days <= 30 %}<span class="status danger">Expires in {{ item.status.days }} day{{ '' if item.status.days == 1 else 's' }}</span>
+        {% else %}<span class="status online">Valid for {{ item.status.days }} days</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="subtle">TLS certificates appear here after TrustTunnel is configured.</p>
+    {% endif %}
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Recent activity</h2><a href="{{ url_for('logs', source='panel') }}">Panel log</a></div>
+    {% if events %}
+    <ul class="event-list">
+      {% for event in events %}
+      <li>
+        <span>{{ event.label }}</span>
+        <span class="subtle">{{ 'Rejected' if event.result == 'rejected' else 'Completed' }}{% if event.address %} from {{ event.address }}{% endif %} at <time datetime="{{ event.at }}">{{ event.at }}</time></span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="subtle">No administrative activity has been recorded yet.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

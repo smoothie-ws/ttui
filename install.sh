@@ -1,39 +1,139 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository=https://github.com/smoothie-ws/ttui
+repository=https://github.com/trusttunnel-ui/ttui-panel
 panel=/opt/ttui
 endpoint=/opt/trusttunnel/trusttunnel_endpoint
 units=/etc/systemd/system
 sudoers=/etc/sudoers.d/ttui
 launcher=/usr/local/bin/ttui
 managed_units=(ttui.service trusttunnel.service ttui-router.service)
+support_units=(ttui-acme.service ttui-acme.timer ttui-metrics.service ttui-metrics.timer ttui-backups.service ttui-backups.timer ttui-update.service)
+endpoint_tag=v1.3.1
+client_tag=v1.3.0
+xray_tag=v26.11.9
+# Releases are named by publication date: YY.MM.DD.
+version_re='[0-9]{2}\.[0-9]{2}\.[0-9]{2}'
+
+release_info() {
+    local version
+    version=$(cat "$1/VERSION")
+    [[ $version =~ ^$version_re$ ]]
+    cat <<EOF
+{"format":1,"version":"$version","components":{"endpoint":"$endpoint_tag","client":"$client_tag","xray":"$xray_tag"},"systems":["debian","ubuntu"],"architectures":["x86_64","aarch64"],"minimum_python":[3,9]}
+EOF
+}
+
+start_queued_update() {
+    local version installed
+    version=$(runuser -u ttui -- /usr/bin/python3 -I -c '
+import os, stat, sys
+
+with os.fdopen(os.open("/var/lib/ttui/update-request", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as request:
+    if not stat.S_ISREG(os.fstat(request.fileno()).st_mode):
+        sys.exit("Skip an invalid update request file.")
+    version = request.read(65)
+    if len(version) > 64:
+        sys.exit("Skip an oversized update request.")
+    sys.stdout.write(version.decode("ascii"))
+')
+    if [[ ! $version =~ ^$version_re$ ]]; then
+        echo "Invalid update request version." >&2
+        return 1
+    fi
+    installed=$(cat "$panel/VERSION")
+    if ! dpkg --compare-versions "$version" gt "$installed"; then
+        echo "The requested release is already installed or older." >&2
+        return 1
+    fi
+    main update --version "$version" --newer-only
+}
+
+check_public_domain() {
+    local domain=$1 label='[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?'
+    if [[ ${#domain} -gt 253 || ! $domain =~ ^$label(\.$label)+$ ]] ||
+        ! getent ahosts "$domain" >/dev/null; then
+        echo "Set a DNS record for the panel and pass its hostname with --domain." >&2
+        return 1
+    fi
+    if [[ -e /etc/caddy/Caddyfile ]] || systemctl is-active --quiet caddy.service; then
+        echo "Existing Caddy installation detected. Use --external-proxy with your own configuration." >&2
+        return 1
+    fi
+    if command -v ss >/dev/null && [[ -n $(ss -H -ltn 'sport = :80 or sport = :443') ]]; then
+        echo "TCP ports 80 and 443 must be free for Caddy." >&2
+        return 1
+    fi
+}
+
+check_panel_port() {
+    local port=$1
+    if [[ -n $(ss -H -ltn "sport = :$port") ]]; then
+        echo "TCP port $port is already in use. Choose another port with --port." >&2
+        return 1
+    fi
+}
+
+start_panel_https() {
+    local domain=$1 port=$2
+    cat >/etc/caddy/Caddyfile <<EOF
+$domain {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:$port
+}
+
+http:// {
+    handle /.well-known/acme-challenge/* {
+        reverse_proxy 127.0.0.1:$port
+    }
+    handle {
+        respond 404
+    }
+}
+EOF
+    caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+    systemctl enable caddy.service
+    systemctl restart caddy.service
+    systemctl enable --now ttui-acme.timer
+    if ! curl -fsS --retry 12 --retry-all-errors --retry-delay 5 --max-time 5 \
+        --resolve "$domain:443:127.0.0.1" "https://$domain/ttui/login" -o /dev/null; then
+        echo "Panel is installed, but HTTPS verification failed. Check DNS, ports 80/443, and journalctl -u caddy." >&2
+        return 1
+    fi
+    local status
+    status=$(curl -fsS --max-time 5 --resolve "$domain:443:127.0.0.1" -o /dev/null \
+        -w '%{http_code}' "https://$domain/ttui/")
+    if [[ $status != 302 ]]; then
+        echo "HTTPS panel did not redirect the unauthenticated request to sign-in." >&2
+        return 1
+    fi
+}
 
 fetch_release() (
     local version=$1 work base digest filename extra
     shift
     if [[ $version == latest ]]; then
         base="$repository/releases/latest/download"
-    elif [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    elif [[ $version =~ ^$version_re$ ]]; then
         base="$repository/releases/download/$version"
     else
-        echo "Expected latest or a release such as v0.1.0." >&2
+        echo "Expected latest or a release date such as 26.11.26." >&2
         exit 2
     fi
     work=$(mktemp -d)
     trap 'rm -rf -- "$work"' EXIT
-    curl -fLSs --retry 3 "$base/ttui.tar.gz" -o "$work/ttui.tar.gz"
-    curl -fLSs --retry 3 "$base/ttui.tar.gz.sha256" -o "$work/ttui.tar.gz.sha256"
-    read -r digest filename extra < "$work/ttui.tar.gz.sha256"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.xz" -o "$work/ttui.tar.xz"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$base/ttui.tar.xz.sha256" -o "$work/ttui.tar.xz.sha256"
+    read -r digest filename extra < "$work/ttui.tar.xz.sha256"
     filename=${filename#\*}
-    if [[ ! $digest =~ ^[a-f0-9]{64}$ || $filename != ttui.tar.gz || -n $extra ]]; then
+    if [[ ! $digest =~ ^[a-f0-9]{64}$ || $filename != ttui.tar.xz || -n $extra ]]; then
         echo "Invalid release checksum." >&2
         exit 1
     fi
-    printf '%s *%s\n' "$digest" "$work/ttui.tar.gz" | sha256sum --check --status
+    printf '%s *%s\n' "$digest" "$work/ttui.tar.xz" | sha256sum --check --status
     mkdir "$work/source"
-    tar -xzf "$work/ttui.tar.gz" -C "$work/source"
-    if [[ $version != latest && "v$(cat "$work/source/VERSION")" != "$version" ]]; then
+    tar -xJf "$work/ttui.tar.xz" -C "$work/source"
+    if [[ $version != latest && "$(cat "$work/source/VERSION")" != "$version" ]]; then
         echo "Release asset version mismatch." >&2
         exit 1
     fi
@@ -42,7 +142,7 @@ fetch_release() (
 
 download() {
     local url=$1 digest=$2 target=$3
-    curl -fLSs --retry 3 "$url" -o "$target"
+    curl -fLSs --retry 3 --retry-all-errors --connect-timeout 20 "$url" -o "$target"
     printf '%s  %s\n' "$digest" "$target" | sha256sum --check --status
 }
 
@@ -79,10 +179,13 @@ restore_install() {
     systemctl stop "${managed_units[@]}" || failed=1
     mv -- "$panel" "$backup/rejected-panel" || failed=1
     cp -a -- "$backup/panel" "$panel" || failed=1
-    for file in "$endpoint" "$sudoers" "${managed_units[@]/#/$units/}"; do
+    for file in "$endpoint" "$sudoers" "${support_units[@]/#/$units/}" "${managed_units[@]/#/$units/}"; do
         if [[ -e $backup/$file ]]; then
             cp -a -- "$backup/$file" "$file" || failed=1
         else
+            if [[ -e $file && $file == "$units/ttui-"*.timer ]]; then
+                systemctl disable --now "${file##*/}" || failed=1
+            fi
             rm -f -- "$file" || failed=1
         fi
     done
@@ -92,6 +195,24 @@ restore_install() {
     done
     return "$failed"
 }
+
+backup_before_update() (
+    local source_dir=$1 state=$2 version=$3 snapshot_tool
+    snapshot_tool=$(mktemp -d "$panel/.snapshot-tool.XXXXXX")
+    trap 'rm -rf -- "$snapshot_tool"' EXIT
+    chmod 0755 "$snapshot_tool"
+    install -m 0644 "$source_dir/"{auth,backend,backups,certificates,routing}.py "$snapshot_tool/"
+    cd "$snapshot_tool"
+    runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" -c '
+import sys
+import backend
+import backups
+
+with backend.configuration_change():
+    archive = backups.create(backups.COMPONENTS, sys.argv[1], reason="pre-update")
+print("Configuration backup: " + archive)
+' "$version"
+)
 
 finish_update() {
     local status=$1 backup=$2 recovery
@@ -108,12 +229,22 @@ finish_update() {
 }
 
 main() {
-    local source_dir='' panel_only=0 version=latest allow_downgrade=0 updating=0 target current
+    local source_dir='' version=latest newer_only=0 updating=0 target current=unknown
+    local domain='' access='' adding_https=0 panel_port=8080 port_set=0
+    local -a packages=(ca-certificates curl iproute2 openssl python3 python3-venv sudo unzip util-linux xz-utils)
     local architecture xray_arch endpoint_sha client_sha xray_sha
     local config=/etc/trusttunnel state=/var/lib/ttui
-    local endpoint_tag=v1.3.1 client_tag=v1.3.0 xray_tag=v26.11.9
     local -a forwarded=() active=()
-    local unit file directory
+    local unit file directory credentials
+    if [[ $# == 1 && $1 == --release-info ]]; then
+        release_info "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+        return
+    fi
+    if [[ $# == 1 && $1 == --queued-update ]]; then
+        if [[ $EUID != 0 ]]; then echo "Run as root." >&2; return 1; fi
+        start_queued_update
+        return
+    fi
     if [[ ${1:-} == version || ( $# == 1 && ${1:-} == --version ) ]]; then
         if [[ -r $panel/VERSION ]]; then cat "$panel/VERSION"; else echo "ttui version unavailable." >&2; return 1; fi
         return
@@ -123,9 +254,12 @@ main() {
         case "$1" in
             --source) source_dir=$(realpath "${2:?Missing source directory}"); shift ;;
             --version) version=${2:?Missing release version}; shift ;;
-            --panel-only) panel_only=1; forwarded+=(--panel-only) ;;
-            --allow-downgrade) allow_downgrade=1; forwarded+=(--allow-downgrade) ;;
-            *) echo "Usage: ttui [update] [--version vX.Y.Z | --source DIR] [--panel-only] [--allow-downgrade]" >&2; return 2 ;;
+            --domain) domain=${2:?Missing panel domain}; forwarded+=(--domain "$domain"); shift ;;
+            --port) panel_port=${2:?Missing panel port}; port_set=1; forwarded+=(--port "$panel_port"); shift ;;
+            --local) access=local; forwarded+=(--local) ;;
+            --external-proxy) access=external; forwarded+=(--external-proxy) ;;
+            --newer-only) newer_only=1; forwarded+=(--newer-only) ;;
+            *) echo "Usage: ttui [update] [--version YY.MM.DD | --source DIR] [--domain HOST | --local | --external-proxy] [--port PORT]" >&2; return 2 ;;
         esac
         shift
     done
@@ -142,18 +276,54 @@ main() {
     exec 9>/run/lock/ttui-install.lock
     flock -n 9 || { echo "Another ttui installation is in progress." >&2; return 1; }
     target=$(cat "$source_dir/VERSION")
-    [[ $target =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+    [[ $target =~ ^$version_re$ ]] || {
         echo "Invalid VERSION file." >&2; return 1;
     }
+    echo "Installing ttui $target (web panel and TrustTunnel tools)."
     if [[ -f $state/panel.json && -f $panel/app.py && -x $panel/venv/bin/python ]]; then
         updating=1
         if [[ -f $panel/VERSION ]]; then
             current=$(cat "$panel/VERSION")
-            if (( ! allow_downgrade )) && dpkg --compare-versions "$target" lt "$current"; then
-                echo "Downgrade from $current to $target requires --allow-downgrade." >&2
+            if dpkg --compare-versions "$target" lt "$current"; then
+                echo "Release $target is older than the installed $current." >&2
+                return 1
+            fi
+            if (( newer_only )) && ! dpkg --compare-versions "$target" gt "$current"; then
+                echo "The requested release is already installed or older." >&2
                 return 1
             fi
         fi
+    fi
+    if (( newer_only && ! updating )); then
+        echo "An existing ttui installation is required." >&2
+        return 1
+    fi
+    if [[ ! $panel_port =~ ^[1-9][0-9]{0,4}$ ]] || (( 10#$panel_port < 1024 || 10#$panel_port > 65535 )); then
+        echo "Choose an internal panel port from 1024 to 65535." >&2
+        return 2
+    fi
+    if (( updating && port_set )); then
+        echo "Updates keep the existing panel port. Change TTUI_PORT in /etc/default/ttui and the proxy configuration instead." >&2
+        return 2
+    fi
+    if [[ -n $domain && -n $access ]]; then
+        echo "Choose one panel access mode." >&2; return 2
+    fi
+    if (( updating )) && [[ -n $domain || -n $access ]]; then
+        echo "Updates preserve the existing access mode. Omit access options when updating." >&2; return 2
+    fi
+    if (( ! updating )) && [[ -z $access ]]; then
+        if [[ -z $domain ]]; then
+            echo "Panel HTTPS domain (or rerun with --local for SSH access):" >&2
+            if ! read -r domain </dev/tty || [[ -z $domain ]]; then
+                echo "Pass --domain HOST, --external-proxy, or --local." >&2; return 2
+            fi
+        fi
+        check_public_domain "$domain"
+        packages+=(caddy certbot)
+        adding_https=1
+    elif [[ $access == external ]]; then
+        adding_https=1
     fi
     if [[ ( -e $launcher || -L $launcher ) && $(readlink "$launcher") != "$panel/install.sh" ]]; then
         echo "An unmanaged $launcher already exists." >&2
@@ -163,6 +333,9 @@ main() {
         && ! grep -Fxq '# Managed by ttui' "$units/trusttunnel.service" 2>/dev/null; then
         echo "An existing unmanaged trusttunnel.service was found. See the migration notes." >&2
         return 1
+    fi
+    if (( ! updating )) && [[ ! -f "$config/vpn.toml" || ! -f "$config/hosts.toml" ]]; then
+        echo "You will configure TrustTunnel in the web panel after signing in."
     fi
     architecture=$(uname -m)
     case "$architecture" in
@@ -180,11 +353,13 @@ main() {
     esac
     if (( ! updating )); then
         apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates curl python3 python3-venv sudo unzip util-linux
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
     fi
     if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
         echo "Python 3.9 or newer is required." >&2
+        return 1
+    fi
+    if (( ! updating )) && ! check_panel_port "$panel_port"; then
         return 1
     fi
     local work
@@ -203,12 +378,13 @@ main() {
     tar -xzf "$work/client.tar.gz" -C "$work/client"
     unzip -q "$work/xray.zip" -d "$work/xray"
     test -f "$source_dir/app.py"
+    if (( updating )); then backup_before_update "$source_dir" "$state" "$current"; fi
     (
     if (( updating )); then
         local backup="$work/backup"
         mkdir "$backup"
         cp -a -- "$panel" "$backup/panel"
-        for file in "$endpoint" "$sudoers" "${managed_units[@]/#/$units/}"; do
+        for file in "$endpoint" "$sudoers" "${support_units[@]/#/$units/}" "${managed_units[@]/#/$units/}"; do
             if [[ -e $file ]]; then
                 (cd / && cp -a --parents -- "${file#/}" "$backup")
             fi
@@ -236,37 +412,65 @@ main() {
     for file in geoip.dat geosite.dat; do
         seed_geofile "$state/geo/$file" "$work/xray/$file"
     done
-    install -m 0644 "$source_dir/"{app.py,backend.py,routing.py,requirements.txt,VERSION} "$panel/"
+    install -m 0644 "$source_dir/"*.py "$source_dir/"{requirements.txt,VERSION} "$panel/"
     install -m 0755 "$source_dir/install.sh" "$panel/install.sh"
+    release_info "$source_dir" >"$panel/release-info.json"
     install -m 0644 "$source_dir"/templates/*.html "$panel/templates/"
     install -m 0644 "$source_dir"/static/* "$panel/static/"
     python3 -m venv "$panel/venv"
-    "$panel/venv/bin/python" -m pip install --disable-pip-version-check -r "$panel/requirements.txt"
+    "$panel/venv/bin/python" -m pip install --disable-pip-version-check --no-compile -r "$panel/requirements.txt"
     chmod -R a+rX "$panel/venv"
     install -m 0644 "$source_dir"/systemd/*.service "$units/"
+    install -m 0644 "$source_dir"/systemd/*.timer "$units/"
     install -m 0440 "$source_dir/systemd/ttui.sudoers" /etc/sudoers.d/ttui
     visudo -cf /etc/sudoers.d/ttui
-    systemctl daemon-reload
-
-    if (( ! updating && ! panel_only )) && [[ ! -e "$config/vpn.toml" && ! -e "$config/hosts.toml" ]]; then
-        if ( : </dev/tty ) 2>/dev/null; then
-            (
-                cd "$config"
-                umask 077
-                setpriv --reuid ttui --regid ttui --init-groups --inh-caps +net_bind_service \
-                    --ambient-caps +net_bind_service "$endpoint" --setup-wizard \
-                    --lib-settings vpn.toml --hosts-settings hosts.toml </dev/tty
-            )
-        else
-            echo "No terminal for the TrustTunnel wizard. Configure the endpoint via the Server tab."
+    if (( adding_https )); then
+        install -d -m 0755 "$units/ttui.service.d"
+        printf '[Service]\nEnvironment=TTUI_REQUIRE_HTTPS=1\n' >"$units/ttui.service.d/10-https.conf"
+        if [[ -n $domain ]]; then
+            printf 'Environment=TTUI_ACME=1\n' >>"$units/ttui.service.d/10-https.conf"
         fi
     fi
+    systemctl daemon-reload
+
     if (( ! updating )); then
-        runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init
+        touch /etc/default/ttui
+        awk -v port="$panel_port" '!/^TTUI_PORT=/{print} END{print "TTUI_PORT=" port}' \
+            /etc/default/ttui >"$work/ttui.default"
+        install -m 0644 "$work/ttui.default" /etc/default/ttui
+        credentials=$(runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init)
+        echo
+        echo "ttui web panel sign-in"
+        if [[ -n $domain ]]; then
+            echo "Sign-in URL: https://$domain/ttui/"
+        elif [[ $access == external ]]; then
+            echo "Point your HTTPS reverse proxy at http://127.0.0.1:$panel_port and open /ttui/ on your HTTPS origin."
+        else
+            echo "Default sign-in URL: http://127.0.0.1:$panel_port/ttui/"
+            echo "Remote access with the default bind: ssh -L $panel_port:127.0.0.1:$panel_port USER@SERVER"
+        fi
+        runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --panel-info
+        if [[ -n $credentials ]]; then
+            echo "Save these administrator credentials (path | username | password):"
+            printf '%s\n' "$credentials"
+        else
+            echo "The existing administrator password was kept."
+        fi
+        echo "Password reset: sudo -u ttui env TTUI_STATE=$state $panel/venv/bin/python $panel/app.py --reset-login"
+        echo
         systemctl enable ttui.service trusttunnel.service
-        active=(ttui.service)
+        systemctl restart ttui.service
+        wait_service ttui.service
+        ln -sfn "$panel/install.sh" "$launcher"
+        echo "ttui web panel is running."
+        if [[ -n $domain ]]; then start_panel_https "$domain" "$panel_port"; fi
         if [[ -f "$config/vpn.toml" && -f "$config/hosts.toml" ]]; then
-            active+=(trusttunnel.service)
+            if ! systemctl restart trusttunnel.service || ! wait_service trusttunnel.service; then
+                echo "TrustTunnel failed to start. The ttui panel is still running. Check journalctl -u trusttunnel.service." >&2
+                exit 1
+            fi
+        else
+            echo "Sign in and open TrustTunnel to create the VPN node."
         fi
     fi
     for unit in "${active[@]}"; do
@@ -274,12 +478,9 @@ main() {
         wait_service "$unit"
     done
     ln -sfn "$panel/install.sh" "$launcher"
+    systemctl enable --now ttui-metrics.timer ttui-backups.timer
     )
     echo "ttui $target installed."
-    if (( ! updating )); then
-        echo "Default panel address: http://127.0.0.1:8080/ttui/"
-        echo "Remote access: ssh -L 8080:127.0.0.1:8080 USER@SERVER"
-    fi
 }
 
 main "$@"

@@ -1,1 +1,12 @@
-ttui ALL=(root) NOPASSWD: /usr/bin/systemctl restart trusttunnel.service, /usr/bin/systemctl stop trusttunnel.service, /usr/bin/systemctl restart ttui-router.service, /usr/bin/systemctl stop ttui-router.service
+ttui ALL=(root) NOPASSWD: /usr/bin/systemctl restart trusttunnel.service, /usr/bin/systemctl stop trusttunnel.service, /usr/bin/systemctl reload trusttunnel.service, /usr/bin/systemctl restart ttui-router.service, /usr/bin/systemctl stop ttui-router.service
+Cmnd_Alias TTUI_JOURNALS = /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui.service, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=trusttunnel.service, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui-router.service, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui-router.service --identifier=ttui-xray, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui-router.service --identifier=ttui-cascade, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=caddy.service, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui-acme.service, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui-backups.service, \
+                          /usr/bin/journalctl --no-pager --output=json --lines=500 --unit=ttui-update.service
+ttui ALL=(root) NOPASSWD: TTUI_JOURNALS
+ttui ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block ttui-update.service

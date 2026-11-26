@@ -1,0 +1,17 @@
+# Managed by ttui
+[Unit]
+Description=Sample host metrics for ttui
+
+[Service]
+Type=oneshot
+User=ttui
+Group=ttui
+WorkingDirectory=/opt/ttui
+Environment=TTUI_STATE=/var/lib/ttui
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/ttui/venv/bin/python /opt/ttui/app.py --sample-metrics
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full

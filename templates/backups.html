@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Backups{% endblock %}
+{% block content %}
+{{ heading('Backups', 'Save and restore panel and VPN configuration.') }}
+<section class="section">
+  <div class="section-head"><h2>Create backup</h2></div>
+  <p class="subtle">Archives contain credentials and private keys. Keep downloaded copies in private storage.</p>
+  <form method="post" class="stack">
+    {{ token() }}
+    <input type="hidden" name="operation" value="create">
+    <div class="grid">
+      {% for key, label in components.items() %}
+      <label class="check"><input type="checkbox" name="component" value="{{ key }}" checked> {{ label }}</label>
+      {% endfor %}
+    </div>
+    <div><button class="primary">Create backup</button></div>
+  </form>
+</section>
+<section class="section">
+  <div class="section-head"><h2>Automatic backups</h2></div>
+  <p class="subtle">ttui keeps the seven newest scheduled backups.</p>
+  {% if schedule.error %}<p class="notice error">{{ schedule.error }}</p>{% endif %}
+  {% if schedule.next %}<p class="subtle">Next backup due {{ schedule.next }}. The schedule is checked hourly.</p>{% endif %}
+  <form method="post" class="stack">
+    {{ token() }}
+    <div class="grid">
+      <label>Schedule <select name="interval">
+        {% for key, interval in intervals.items() %}<option value="{{ key }}"{% if schedule.interval == key %} selected{% endif %}>{{ interval[0] }}</option>{% endfor %}
+      </select></label>
+    </div>
+    <div class="grid">
+      {% for key, label in components.items() %}
+      <label class="check"><input type="checkbox" name="component" value="{{ key }}"{% if key in schedule.components %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </div>
+    <div><button name="operation" value="schedule">Save schedule</button></div>
+  </form>
+</section>
+<section class="section">
+  <div class="section-head"><h2>Import backup</h2></div>
+  <form method="post" enctype="multipart/form-data" class="row">
+    {{ token() }}
+    <label>ttui backup ZIP <input type="file" name="archive" accept=".zip,application/zip" required></label>
+    <button name="operation" value="import">Import and verify</button>
+  </form>
+</section>
+<section class="section">
+  <div class="section-head"><h2>Backup history</h2></div>
+  {% if archives %}
+  {% set ns = namespace(row=0) %}
+  <div class="table-scroll">
+    <table aria-label="Backup history">
+      <thead><tr><th>Backup</th><th>Created</th><th>Contents</th><th class="actions-cell">Actions</th></tr></thead>
+      <tbody>
+        {% for name, archive in archives %}
+        {% set ns.row = ns.row + 1 %}
+        <tr>
+          <td class="mono cell-main">{{ name }}</td>
+          <td class="subtle">{{ archive['created'] if archive else 'Unknown' }}</td>
+          <td class="subtle">
+            {% if archive %}{{ archive['files']|length }} files · ttui {{ archive['version'] }}{% if archive.get('reason') == 'scheduled' %} · Scheduled{% elif archive.get('reason') == 'pre-update' %} · Before update{% elif archive.get('reason') == 'pre-config' %} · Before configuration change{% endif %}
+            {% else %}Manifest unreadable{% endif %}
+          </td>
+          <td class="actions-cell">
+            <div class="actions">
+              <form method="post">
+                {{ token() }}<input type="hidden" name="name" value="{{ name }}">
+                <button class="small" name="operation" value="verify">Verify</button>
+              </form>
+              <a class="button small" href="{{ url_for('download_backup', name=name) }}">Download</a>
+              <button type="button" class="small" data-expand aria-controls="backup-detail-{{ ns.row }}" aria-expanded="false">Options</button>
+            </div>
+          </td>
+        </tr>
+        <tr class="detail-row" id="backup-detail-{{ ns.row }}">
+          <td colspan="4">
+            <div class="stack">
+              {% if archive %}
+              <p class="subtle">{% for key in archive['components'] %}{{ components[key] }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+              {% if archive.get('external_tls_files') %}
+              <p class="notice">TLS files outside the managed configuration directory require a separate backup.</p>
+              <ul>{% for path in archive['external_tls_files'] %}<li><code>{{ path }}</code></li>{% endfor %}</ul>
+              {% endif %}
+              {% if archive.get('certbot_manual_restore') %}
+              <p class="notice">This archive includes Certbot configuration, which will be restored with the Endpoint.</p>
+              {% endif %}
+              {% else %}
+              <p class="notice error">The archive manifest could not be read.</p>
+              {% endif %}
+              <details class="flat">
+                <summary>Delete backup</summary>
+                <form class="details-body stack" method="post" data-confirm="Permanently delete this backup?">
+                  {{ token() }}<input type="hidden" name="name" value="{{ name }}">
+                  <label>Current administrator password <input type="password" name="current_password" autocomplete="current-password" required></label>
+                  <div><button class="danger" name="operation" value="delete">Delete backup</button></div>
+                </form>
+              </details>
+              {% if archive %}
+              <details class="flat">
+                <summary>Restore</summary>
+                <form class="details-body stack" method="post">
+                  {{ token() }}
+                  <input type="hidden" name="name" value="{{ name }}">
+                  <p class="subtle">Matching files will be replaced. VPN connections may be interrupted.</p>
+                  {% if 'panel' in archive['components'] %}
+                  <p class="subtle">Make sure you can sign in with the archived administrator credentials, authenticator, and panel path. Restoring them signs out all sessions.</p>
+                  {% endif %}
+                  <label>Current administrator password <input type="password" name="current_password" autocomplete="current-password" required></label>
+                  <div><button name="operation" value="restore">Restore backup</button></div>
+                </form>
+              </details>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No backups yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

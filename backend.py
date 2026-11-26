@@ -7,10 +7,16 @@ import shutil
 import subprocess
 import tempfile
 import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import RLock
 
 import tomlkit
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 from routing import DEFAULT_ROUTING, ROUTER_ADDRESS, compile_routing, xray_env
 
@@ -23,9 +29,19 @@ XRAY = os.environ.get("TTUI_XRAY", "/opt/ttui/xray/xray")
 VPN, HOSTS, ROUTING = CONFIG / "vpn.toml", CONFIG / "hosts.toml", STATE / "routing.json"
 LAUNCH = STATE / "endpoint.json"
 GEO = STATE / "geo"
+GEOFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.dat")
 ENDPOINT_UNIT, ROUTER_UNIT = "trusttunnel.service", "ttui-router.service"
 SYSTEMCTL = os.environ.get("TTUI_SYSTEMCTL", "/usr/bin/systemctl")
 
+@contextmanager
+def configuration_change():
+    with LOCK:
+        if fcntl is None:
+            yield
+        else:
+            with (STATE / ".configuration.lock").open("ab") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                yield
 
 def read(path, default=None):
     try:
@@ -34,7 +50,6 @@ def read(path, default=None):
         if default is None:
             raise
         return default
-
 
 def atomic(path, data):
     if isinstance(data, str):
@@ -49,12 +64,11 @@ def atomic(path, data):
             file.close()
             temporary.replace(path)
         finally:
+            file.close()
             temporary.unlink(missing_ok=True)
-
 
 def write_json(path, value):
     atomic(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
-
 
 def command(args, **kwargs):
     result = subprocess.run(args, text=True, encoding="utf-8", errors="replace",
@@ -64,10 +78,8 @@ def command(args, **kwargs):
         raise RuntimeError(message[-2500:] or f"Command exited with code {result.returncode}.")
     return result.stdout
 
-
 def service(action, unit):
     command(["/usr/bin/sudo", "-n", SYSTEMCTL, action, unit], timeout=90)
-
 
 def service_state(unit):
     try:
@@ -75,6 +87,18 @@ def service_state(unit):
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         return "inactive"
 
+def service_states(units):
+    """Query several units in one systemctl call, falling back to separate calls."""
+    units = list(dict.fromkeys(units))
+    try:
+        result = subprocess.run([SYSTEMCTL, "is-active", *units], text=True, encoding="utf-8",
+                                errors="replace", capture_output=True, timeout=3, check=False)
+        states = result.stdout.splitlines()
+        if len(states) == len(units):
+            return dict(zip(units, (state.strip() for state in states)))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {unit: service_state(unit) for unit in units}
 
 def active_endpoint():
     args = [SYSTEMCTL, "show", "-p", "MainPID", "-p", "ActiveState", ENDPOINT_UNIT]
@@ -85,7 +109,6 @@ def active_endpoint():
             return
     raise RuntimeError("TrustTunnel exited during startup. Check journalctl -u trusttunnel.")
 
-
 def managed_path(value, fallback):
     if not isinstance(value if value is not None else fallback, str):
         raise ValueError("The configuration path must be a string.")
@@ -94,14 +117,12 @@ def managed_path(value, fallback):
         raise ValueError("Client credentials and connection filter files must be inside the TrustTunnel configuration directory.")
     return path
 
-
 def related(vpn):
     credentials = managed_path(vpn.get("credentials_file"), "credentials.toml")
     rules = managed_path(vpn.get("rules_file"), "rules.toml")
     if credentials == rules:
         raise ValueError("Client credentials and connection filters must use separate files.")
     return credentials, rules
-
 
 def clients(document):
     entries = document.get("client", [])
@@ -117,7 +138,6 @@ def clients(document):
         names.add(entry["username"])
     return entries
 
-
 def loopback(vpn):
     try:
         host, port = vpn.get("listen_address", "").rsplit(":", 1)
@@ -125,25 +145,20 @@ def loopback(vpn):
     except (AttributeError, ValueError):
         return False
 
-
 def configured_clients(vpn, raw=None):
     if not vpn.get("credentials_file"):
         return []
     return clients(tomlkit.parse(read(related(vpn)[0], "") if raw is None else raw))
 
-
 def check_clients(vpn, raw=None):
     if not configured_clients(vpn, raw) and not loopback(vpn):
         raise ValueError("An endpoint listening outside loopback requires credentials_file and at least one client.")
 
-
 def load_routing():
     return json.loads(read(ROUTING, json.dumps(DEFAULT_ROUTING)))
 
-
 def launch_options():
     return json.loads(read(LAUNCH, "{}"))
-
 
 def endpoint_command(options):
     command_line = [ENDPOINT, str(VPN), str(HOSTS)]
@@ -160,43 +175,52 @@ def endpoint_command(options):
             command_line.append(f"--{key}={value}")
     return command_line
 
-
 def validate_xray(config):
     with tempfile.TemporaryDirectory(dir=STATE) as directory:
         path = Path(directory) / "xray.json"
         path.write_text(json.dumps(config), encoding="utf-8")
         command([XRAY, "run", "-test", "-c", str(path)], env=xray_env(GEO))
 
-
 def change_files(changes, apply, recover):
-    originals = {path: path.read_bytes() if path.exists() else None for path in changes}
-    written = []
-    applying = False
-    try:
-        for path, content in changes.items():
-            atomic(path, content)
-            written.append(path)
-        applying = True
-        apply()
-    except Exception as error:
-        failures = []
-        for path in reversed(written):
-            try:
-                if originals[path] is None:
-                    path.unlink(missing_ok=True)
+    with ExitStack() as stack:
+        originals = {}
+        for path in changes:
+            if path.exists():
+                checkpoint = stack.enter_context(tempfile.SpooledTemporaryFile(max_size=128 * 1024, dir=STATE))
+                with path.open("rb") as original:
+                    shutil.copyfileobj(original, checkpoint, length=128 * 1024)
+                checkpoint.seek(0)
+                originals[path] = checkpoint
+        written = []
+        applying = False
+        try:
+            for path, content in changes.items():
+                if isinstance(content, Path):
+                    with content.open("rb") as source:
+                        atomic(path, source)
                 else:
-                    atomic(path, originals[path])
-            except OSError as failed_restore:
-                failures.append(str(failed_restore))
-        if applying and not failures:
-            try:
-                recover()
-            except Exception as failed_restart:
-                failures.append(str(failed_restart))
-        if failures:
-            raise RuntimeError(f"{error}\nRecovery failed: {'; '.join(failures)}") from error
-        raise
-
+                    atomic(path, content)
+                written.append(path)
+            applying = True
+            apply()
+        except Exception as error:
+            failures = []
+            for path in reversed(written):
+                try:
+                    if path not in originals:
+                        path.unlink(missing_ok=True)
+                    else:
+                        atomic(path, originals[path])
+                except OSError as failed_restore:
+                    failures.append(str(failed_restore))
+            if applying and not failures:
+                try:
+                    recover()
+                except Exception as failed_restart:
+                    failures.append(str(failed_restart))
+            if failures:
+                raise RuntimeError(f"{error}\nRecovery failed: {'; '.join(failures)}") from error
+            raise
 
 def apply_endpoint(changes, vpn):
     credentials, rules = related(vpn)
@@ -214,7 +238,6 @@ def apply_endpoint(changes, vpn):
         active_endpoint()
 
     change_files(changes, restart, restart if was_active else lambda: service("stop", ENDPOINT_UNIT))
-
 
 def apply_routing(spec):
     config, _ = compile_routing(spec)
@@ -273,7 +296,6 @@ def apply_routing(spec):
 
     change_files(changes, apply, recover)
 
-
 def replace_geofile(filename, data):
     spec = load_routing()
     config = compile_routing(spec)[0] if spec["enabled"] else None
@@ -293,7 +315,6 @@ def replace_geofile(filename, data):
             service("restart", ROUTER_UNIT)
 
     change_files({GEO / filename: data}, apply, recover)
-
 
 def export_client(name, form):
     fmt = form.get("format", "deeplink")

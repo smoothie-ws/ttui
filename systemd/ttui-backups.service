@@ -1,0 +1,18 @@
+# Managed by ttui
+[Unit]
+Description=Run due ttui backups
+
+[Service]
+Type=oneshot
+User=ttui
+Group=ttui
+WorkingDirectory=/opt/ttui
+Environment=TTUI_STATE=/var/lib/ttui
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-/etc/default/ttui
+ExecStart=/opt/ttui/venv/bin/python /opt/ttui/app.py --scheduled-backup
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true

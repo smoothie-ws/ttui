@@ -1,14 +1,17 @@
 # Changelog
 
-## Unreleased
+Versions are named by publication date: YY.MM.DD.
 
-- Safely switch between existing client credentials and connection filter files.
-- Preserve the state of stopped services when applying routing changes and avoid unnecessary restarts when uploading geodata.
-- Run CI on every push to `dev`.
-- Translate the panel, diagnostics, and documentation into English.
+## 26.11.26
 
-## 0.1.0
+First MVP release of the ttui web panel for a single TrustTunnel Endpoint.
 
-- Initial TrustTunnel web panel with client management, TLS hosts, and Xray routing.
-- Install from GitHub Releases and update in place with automatic recovery after a failed startup.
-- Build, verify, and publish releases from SemVer tags with GitHub Actions.
+- Browser-first setup: managed HTTPS with Caddy, initial administrator credentials, and one-click node creation on the panel hostname.
+- Dashboard with service states, node readiness, host resources, traffic and load history, certificate expiry warnings, and recent administrative activity.
+- Client management with `tt://` links, QR codes, TOML exports, per-client connection limits, and live counters from loopback Endpoint metrics.
+- TrustTunnel endpoint settings, TLS hosts, connection filters, advanced TOML editing, and startup options with reviewed diffs and automatic recovery.
+- Xray routing editor with outbounds, ordered rules, geodata uploads, and TrustTunnel cascades.
+- Backups with verification, import, restore, and schedules; TOTP authenticator and IP allowlist; service logs and diagnostics.
+- In-panel updates from official GitHub releases with a configuration snapshot and rollback on failure.
+- Minimal borderless interface in the agentsys-client style with dark and light themes.
+- Release archive ships minified sources without documentation files; installed services skip bytecode caches.

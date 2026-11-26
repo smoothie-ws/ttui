@@ -2,20 +2,75 @@
 {% block title %}Settings{% endblock %}
 {% block content %}
 {{ heading('Settings', 'Web access and administrator settings.', 'ttui ' ~ version) }}
-<section class="card">
-  <form class="stack" method="post" action="{{ url_for('save_settings') }}">
-    {{ token() }}
-    <div class="grid">
-      <label>Panel path <input name="path" value="{{ config.path or '/' }}" required spellcheck="false"></label>
-      <label>Public TrustTunnel address <input name="address" value="{{ config.address }}" placeholder="vpn.example.com:443"></label>
-      <label>Username <input name="username" value="{{ config.username }}" autocomplete="username" maxlength="64" required></label>
-      <label>New password <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Leave blank to keep the current password"></label>
+<form method="post" action="{{ url_for('save_settings') }}">
+  {{ token() }}
+  <section class="section">
+    <div class="section-head"><h2>Panel access</h2></div>
+    <div class="settings">
+      {% call setting('Panel path', 'URL prefix the panel is served under. Changing it signs out all sessions.', 'setting-path') %}
+      <input id="setting-path" name="path" value="{{ config.path or '/' }}" required spellcheck="false">
+      {% endcall %}
+      {% call setting('HTTPS-only cookies', 'Required by the managed HTTPS configuration.' if https_required else 'Send session cookies over HTTPS only. Enable behind an HTTPS proxy.', 'setting-secure') %}
+      <label class="check"><input id="setting-secure" name="secure_cookie" type="checkbox" {% if config.secure_cookie or https_required %}checked{% endif %} {% if https_required %}disabled{% endif %}> Send cookies over HTTPS only</label>
+      {% endcall %}
+      {% call setting('IP allowlist', 'Addresses or CIDR ranges, one per line. Leave blank to allow every address. Your current address is ' ~ request.remote_addr ~ '.', 'setting-allowlist') %}
+      <textarea id="setting-allowlist" name="ip_allowlist" rows="3" maxlength="4096" spellcheck="false" placeholder="192.0.2.10 or 2001:db8::/48">{{ (config.ip_allowlist or []) | join('\n') }}</textarea>
+      {% endcall %}
     </div>
-    <label class="check"><input name="secure_cookie" type="checkbox" {% if config.secure_cookie %}checked{% endif %}> Send cookies over HTTPS only</label>
-    <div class="row separate">
-      <label>Current password <input type="password" name="current_password" autocomplete="current-password" maxlength="256" required></label>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Connection exports</h2></div>
+    <div class="settings">
+      {% call setting('Public TrustTunnel address', 'Host and port offered in client exports. Defaults to the first VPN TLS host.', 'setting-address') %}
+      <input id="setting-address" name="address" value="{{ config.address }}" placeholder="vpn.example.com:443" spellcheck="false">
+      {% endcall %}
+    </div>
+  </section>
+  <section class="section">
+    <div class="section-head"><h2>Administrator account</h2></div>
+    <div class="settings">
+      {% call setting('Username', 'Changing the username or password signs out all sessions.', 'setting-username') %}
+      <input id="setting-username" name="username" value="{{ config.username }}" autocomplete="username" maxlength="64" required>
+      {% endcall %}
+      {% call setting('New password', '12–256 characters. Leave blank to keep the current password.', 'setting-password') %}
+      <input id="setting-password" name="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="Leave blank to keep the current password">
+      {% endcall %}
+      {% call setting('Current password', 'Required to save any change on this page.', 'setting-current') %}
+      <input id="setting-current" type="password" name="current_password" autocomplete="current-password" maxlength="256" required>
+      {% endcall %}
+    </div>
+    <div class="actions separate">
       <button class="primary">Save settings</button>
     </div>
+  </section>
+</form>
+<section class="section">
+  <div class="section-head"><h2>Authenticator</h2>
+    {% if config.totp_secret %}<span class="status online">Enabled</span>{% endif %}
+  </div>
+  {% if config.totp_secret %}
+  <p class="subtle">Two-factor authentication is enabled. Disabling it requires a fresh authenticator code.</p>
+  {% else %}
+  <p class="subtle">Add a time-based one-time code to the sign-in form.</p>
+  {% endif %}
+  <form class="row" method="post" action="{{ url_for('mfa') }}">
+    {{ token() }}
+    <label>Current password <input type="password" name="current_password" required maxlength="256" autocomplete="current-password"></label>
+    {% if config.totp_secret %}
+    <label>Authenticator code <input name="code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label>
+    <button class="danger" name="operation" value="disable">Disable authenticator</button>
+    {% else %}
+    <button name="operation" value="begin">Set up authenticator</button>
+    {% endif %}
   </form>
+</section>
+<section class="section">
+  <div class="section-head"><h2>Sessions</h2></div>
+  <form class="row" method="post" action="{{ url_for('revoke_sessions') }}">
+    {{ token() }}
+    <label>Current password <input type="password" name="current_password" required maxlength="256" autocomplete="current-password"></label>
+    <button class="danger">Sign out all sessions</button>
+  </form>
+  <p class="separate"><a href="{{ url_for('logs', source='panel', q='Audit:') }}">Administrative activity</a></p>
 </section>
 {% endblock %}

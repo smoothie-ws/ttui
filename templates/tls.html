@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}TLS & Certificates{% endblock %}
+{% macro host_fields(host={}, group='main_hosts') %}
+<div class="grid">
+  <label>Hostname <input name="hostname" value="{{ host.get('hostname', '') }}" required placeholder="vpn.example.com"></label>
+  <label>Purpose <select name="group" aria-label="Purpose">
+    {% for key, label in host_types.items() %}<option value="{{ key }}" {% if key == group %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <label>Certificate chain path <input name="cert_chain_path" value="{{ host.get('cert_chain_path', '') }}" placeholder="certs/fullchain.pem"></label>
+  <label>Private key path <input name="private_key_path" value="{{ host.get('private_key_path', '') }}" placeholder="certs/privkey.pem"></label>
+</div>
+<details class="flat">
+  <summary>Upload certificate and private key</summary>
+  <div class="details-body grid">
+    <label>Certificate chain (PEM) <input type="file" accept=".pem,.crt,.cer" name="certificate"></label>
+    <label>Private key (PEM) <input type="file" accept=".pem,.key" name="private_key"></label>
+  </div>
+  <p class="subtle">Uploading both files replaces the path values for this host.</p>
+</details>
+{% include "acme_fields.html" %}
+{% endmacro %}
+{% block content %}
+{{ heading('TLS & Certificates', 'Manage the certificates used by TrustTunnel Endpoint.') }}
+{% if not configured %}
+<p class="notice">Set up TrustTunnel under <a href="{{ url_for('endpoint') }}">TrustTunnel</a> before adding more TLS hosts.</p>
+{% else %}
+{% set ns = namespace(row=0) %}
+<section class="section">
+  <div class="section-head"><h2>TLS hosts</h2></div>
+  <div class="table-scroll">
+    <table aria-label="TLS hosts">
+      <thead><tr><th>Hostname</th><th>Purpose</th><th>Certificate</th><th class="actions-cell">Actions</th></tr></thead>
+      <tbody>
+        {% for group, records in hosts.items() %}
+        {% for host in records %}
+        {% set ns.row = ns.row + 1 %}
+        {% set cert = certificate_info.get(host.get('cert_chain_path', '')|string) %}
+        <tr>
+          <td class="mono cell-main">{{ host.hostname }}</td>
+          <td>{{ host_types[group] }}</td>
+          <td>
+            {% if cert %}
+            {% if cert.days < 0 %}<span class="status danger">Expired</span>
+            {% elif cert.days <= 30 %}<span class="status warn">Expires in {{ cert.days }} day{{ '' if cert.days == 1 else 's' }}</span>
+            {% else %}<span class="status online">Valid · {{ cert.days }} days</span>{% endif %}
+            {% else %}<span class="status danger">Unavailable</span>{% endif %}
+          </td>
+          <td class="actions-cell">
+            <button type="button" class="small" data-expand aria-controls="tls-detail-{{ ns.row }}" aria-expanded="false">Edit</button>
+          </td>
+        </tr>
+        <tr class="detail-row" id="tls-detail-{{ ns.row }}">
+          <td colspan="4">
+            <div class="stack">
+              {% if cert %}
+              <p class="subtle">{% if cert.days < 0 %}Expired{% elif cert.days <= 30 %}Expiring soon{% else %}Expires{% endif %} · <time datetime="{{ cert.expires }}">{{ cert.expires }}</time></p>
+              <p class="subtle">SHA-256 fingerprint <code>{{ cert.fingerprint }}</code></p>
+              {% else %}
+              <p class="notice error">Certificate information unavailable.</p>
+              {% endif %}
+              <form class="stack" method="post" enctype="multipart/form-data">
+                {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
+                <input type="hidden" name="source" value="{{ group }}"><input type="hidden" name="index" value="{{ loop.index0 }}">
+                {{ host_fields(host, group) }}
+                <div class="actions">
+                  <button class="primary" name="operation" value="edit">Save host</button>
+                  <button class="danger" name="operation" value="delete" formnovalidate data-confirm-button="Delete this TLS host?">Delete host</button>
+                </div>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="section">
+  <div class="section-head"><h2>Add TLS host</h2></div>
+  <form class="stack" method="post" enctype="multipart/form-data">
+    {{ token() }}<input type="hidden" name="revision" value="{{ revision }}">
+    {{ host_fields() }}
+    <div><button class="primary" name="operation" value="create">Add host</button></div>
+  </form>
+</section>
+{% endif %}
+{% if history %}
+<section class="section">
+  <div class="section-head"><h2>Recent certificate changes</h2></div>
+  <ul class="event-list">
+    {% for event in history %}
+    <li><span>{{ {'create': 'Added', 'edit': 'Updated', 'delete': 'Removed'}.get(event.operation) }} {{ event.hostname }}</span>
+      <time class="subtle" datetime="{{ event.at }}">{{ event.at }}</time></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}
