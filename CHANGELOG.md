@@ -7,6 +7,7 @@ Versions are named by publication date: YY.MM.DD.
 First MVP release of the ttui web panel for a single TrustTunnel Endpoint.
 
 - Browser-first setup: managed HTTPS with Caddy, initial administrator credentials, and one-click node creation on the panel hostname.
+- Install with one command and no domain: the panel binds to the server IP and prints its HTTP URL; one-click node creation also works when the panel is opened by IP.
 - Dashboard with service states, node readiness, host resources, traffic and load history, certificate expiry warnings, and recent administrative activity.
 - Client management with `tt://` links, QR codes, TOML exports, per-client connection limits, and live counters from loopback Endpoint metrics.
 - TrustTunnel endpoint settings, TLS hosts, connection filters, advanced TOML editing, and startup options with reviewed diffs and automatic recovery.

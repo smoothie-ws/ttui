@@ -473,6 +473,25 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((self.directory / "endpoint-key.pem").read_bytes(), b"generated PEM")
         self.service.assert_called_once_with("restart", b.ENDPOINT_UNIT)
 
+    def test_setup_stores_the_public_export_address(self):
+        def certificate(args):
+            for option in ("-out", "-keyout"):
+                Path(args[args.index(option) + 1]).write_bytes(b"generated PEM")
+
+        settings_path = self.directory / "panel.json"
+        b.write_json(settings_path, {"path": "/ttui", "secret": "secret", "username": "admin", "address": ""})
+        fields = {"hostname": "vpn.local", "bind": "0.0.0.0", "port": "443", "username": "first",
+                  "public_address": "203.0.113.5:443"}
+        config = {"path": "/ttui", "secret": "secret", "username": "admin", "address": ""}
+        with patch.object(panel, "SETTINGS", settings_path), patch.object(panel, "settings", return_value=config), \
+                patch.dict(panel.app.config, SECRET_KEY="secret"), patch.object(b, "command", side_effect=certificate):
+            with panel.app.test_request_context("/setup", method="POST", data={**fields, "public_address": "nope:443"}):
+                self.assertEqual(panel.setup_endpoint().status_code, 302)
+                self.assertFalse(b.VPN.exists())
+            with panel.app.test_request_context("/setup", method="POST", data=fields):
+                self.assertEqual(panel.setup_endpoint().status_code, 302)
+        self.assertEqual(json.loads(settings_path.read_text(encoding="utf-8"))["address"], "203.0.113.5:443")
+
     def test_setup_checks_existing_credentials_before_requesting_certificate(self):
         credentials = self.directory / "credentials.toml"
         credentials.write_text("existing credentials", encoding="utf-8")

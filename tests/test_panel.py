@@ -171,16 +171,27 @@ class PanelTest(unittest.TestCase):
                 "csrf": token, "username": "admin", "password": "correct-password",
             })
             page = client.get("/ttui/endpoint", base_url="http://panel.example.com")
-            self.assertIn(b"Create node on panel.example.com:443", page.data)
+            self.assertIn(b"Create node for panel.example.com:443", page.data)
             self.assertIn(b"Start TrustTunnel", page.data)
+            other = panel.app.test_client()
+            login = other.get("/ttui/login", base_url="http://203.0.113.5:8080")
+            token = re.search(rb'name="csrf" value="([^"]+)"', login.data)[1].decode()
+            other.post("/ttui/login", base_url="http://203.0.113.5:8080", data={
+                "csrf": token, "username": "admin", "password": "correct-password",
+            })
+            page = other.get("/ttui/endpoint", base_url="http://203.0.113.5:8080")
+            self.assertIn(b"Create node for 203.0.113.5:443", page.data)
+            self.assertIn(b'name="public_address" value="203.0.113.5:443"', page.data)
 
-    def test_quick_setup_uses_a_real_panel_hostname_only(self):
+    def test_quick_setup_works_with_dns_and_ip(self):
         with panel.app.test_request_context("/", base_url="http://panel.example.com"):
-            self.assertEqual(panel.quick_setup_hostname(), "panel.example.com")
-        with panel.app.test_request_context("/", base_url="http://127.0.0.1:8080"):
-            self.assertIsNone(panel.quick_setup_hostname())
+            self.assertEqual(panel.quick_setup(),
+                             {"hostname": "panel.example.com", "address": "", "target": "panel.example.com:443"})
+        with panel.app.test_request_context("/", base_url="http://203.0.113.5:8080"):
+            self.assertEqual(panel.quick_setup(),
+                             {"hostname": "vpn.local", "address": "203.0.113.5:443", "target": "203.0.113.5:443"})
         with panel.app.test_request_context("/", base_url="http://localhost"):
-            self.assertIsNone(panel.quick_setup_hostname())
+            self.assertIsNone(panel.quick_setup())
 
     def test_settings_cache_reloads_after_a_write(self):
         path = self.state / "panel.json"

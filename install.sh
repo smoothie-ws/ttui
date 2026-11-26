@@ -312,13 +312,11 @@ main() {
     if (( updating )) && [[ -n $domain || -n $access ]]; then
         echo "Updates preserve the existing access mode. Omit access options when updating." >&2; return 2
     fi
-    if (( ! updating )) && [[ -z $access ]]; then
-        if [[ -z $domain ]]; then
-            echo "Panel HTTPS domain (or rerun with --local for SSH access):" >&2
-            if ! read -r domain </dev/tty || [[ -z $domain ]]; then
-                echo "Pass --domain HOST, --external-proxy, or --local." >&2; return 2
-            fi
-        fi
+    if (( ! updating )) && [[ -z $access && -z $domain ]]; then
+        # No domain: serve the panel on the server address over HTTP, with no prompts.
+        access=ip
+    fi
+    if [[ -n $domain ]]; then
         check_public_domain "$domain"
         packages+=(caddy certbot)
         adding_https=1
@@ -434,8 +432,11 @@ main() {
     systemctl daemon-reload
 
     if (( ! updating )); then
+        bind_address=0.0.0.0
+        [[ $access == ip ]] || bind_address=127.0.0.1
         touch /etc/default/ttui
-        awk -v port="$panel_port" '!/^TTUI_PORT=/{print} END{print "TTUI_PORT=" port}' \
+        awk -v port="$panel_port" -v bind="$bind_address" \
+            '!/^TTUI_PORT=/ && !/^TTUI_BIND=/{print} END{print "TTUI_PORT=" port; print "TTUI_BIND=" bind}' \
             /etc/default/ttui >"$work/ttui.default"
         install -m 0644 "$work/ttui.default" /etc/default/ttui
         credentials=$(runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --init)
@@ -445,9 +446,15 @@ main() {
             echo "Sign-in URL: https://$domain/ttui/"
         elif [[ $access == external ]]; then
             echo "Point your HTTPS reverse proxy at http://127.0.0.1:$panel_port and open /ttui/ on your HTTPS origin."
+        elif [[ $access == local ]]; then
+            echo "Sign-in URL: http://127.0.0.1:$panel_port/ttui/"
+            echo "Remote access: ssh -L $panel_port:127.0.0.1:$panel_port USER@SERVER"
         else
-            echo "Default sign-in URL: http://127.0.0.1:$panel_port/ttui/"
-            echo "Remote access with the default bind: ssh -L $panel_port:127.0.0.1:$panel_port USER@SERVER"
+            server_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+            [[ -n $server_ip ]] || server_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
+            echo "Sign-in URL: http://${server_ip:-SERVER-IP}:$panel_port/ttui/"
+            echo "Open TCP $panel_port in the host firewall for remote access."
+            echo "Plain HTTP: pass --domain for HTTPS, or --local for SSH-only access."
         fi
         runuser -u ttui -- env TTUI_STATE="$state" "$panel/venv/bin/python" "$panel/app.py" --panel-info
         if [[ -n $credentials ]]; then

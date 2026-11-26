@@ -6,25 +6,38 @@ A web administration panel for a single TrustTunnel Endpoint. Manage clients, ex
 
 Requires systemd and Python 3.9 or later on Debian or Ubuntu, on x86-64 or ARM64.
 
-### Install the latest release
+### Install without a domain
 
-Replace `panel.example.com` with the panel's DNS hostname:
+One command works on a fresh Debian or Ubuntu server; no domain, prompts, or DNS records are needed:
+
+```bash
+curl -fsSL https://github.com/trusttunnel-ui/ttui-panel/releases/latest/download/bootstrap.sh | sudo bash
+```
+
+The installer starts the panel on `http://SERVER-IP:8080/ttui/` (open TCP 8080 in the firewall), prints the sign-in URL, and generates the administrator credentials. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. The VPN endpoint stays unconfigured until you create it in the browser.
+
+Open the printed URL, sign in, open **TrustTunnel**, and press **Create node**. On an IP-only server the node uses the server address for clients and a self-signed certificate, so exports work without a domain. Open the endpoint TCP port, and UDP for HTTP/3. After setup, go to **Clients** to export the first connection.
+
+### Install with managed HTTPS
+
+Point the domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy:
 
 ```bash
 curl -fsSL https://github.com/trusttunnel-ui/ttui-panel/releases/latest/download/bootstrap.sh | sudo bash -s -- --domain panel.example.com
 ```
 
-### Browser-first setup from a working tree
+The installer starts the web panel and prints its HTTPS URL and sign-in details. When the panel is opened through its DNS name, **Create node** configures the endpoint on that same hostname. The custom form still accepts a separate VPN hostname, listen address, port, and username, and can reuse an existing certificate. TrustTunnel includes the generated certificate in client exports, so clients can verify the endpoint.
 
-```bash
-sudo bash install.sh --source "$PWD" --domain panel.example.com
-```
+From a working tree, run the same steps with `sudo bash install.sh --source "$PWD"` and add `--domain panel.example.com` for managed HTTPS.
 
-Run the command from a checkout that includes browser-first setup. Point the panel domain's DNS records at the server and allow inbound TCP on ports 80 and 443 for Caddy. The installer starts the web panel and prints its HTTPS URL and sign-in details. It installs TrustTunnel Endpoint v1.3.1, TrustTunnel Client v1.3.0, and Xray v26.11.9. On a fresh server, the VPN endpoint stays unconfigured until you complete setup in the browser.
+### Access modes
 
-For an advanced deployment, pass `--port 8088` to change the internal panel port, `--external-proxy` to use an existing HTTPS proxy, or `--local` for SSH-only access. Every installation includes the TrustTunnel tools, and access mode is selected separately. The installer refuses an internal port below 1024 or one already in use, and it writes the chosen port to `/etc/default/ttui`.
+- Default (no flags): plain HTTP on the server IP at port 8080. Pass `--port 8088` to change it.
+- `--domain HOST`: managed HTTPS with Caddy; VPN defaults to port 8443 because Caddy uses 443.
+- `--local`: SSH-only access on `127.0.0.1:8080`; use `ssh -L 8080:127.0.0.1:8080 USER@SERVER`.
+- `--external-proxy`: keep an existing HTTPS proxy; forward the panel path to `127.0.0.1:8080`.
 
-Sign in and open **TrustTunnel**. When the panel is opened through its DNS name, the recommended **Create node** button configures the endpoint on that same hostname, generates the first client `default`, creates a self-signed certificate, and enables HTTP/3. Open the endpoint TCP port, and UDP for HTTP/3. The custom form still accepts a separate VPN hostname, listen address, port, and username, and can reuse an existing certificate. TrustTunnel includes the generated certificate in client exports, so clients can verify the endpoint. After setup, go to **Clients** to export the first connection.
+The installer refuses a port below 1024 or one already in use, and it writes the chosen port and bind address to `/etc/default/ttui`.
 
 For a fresh installation with managed Caddy HTTPS, the custom setup form and **TLS & Certificates** also offer Let's Encrypt. Point a VPN hostname at this server and open TCP port 80 for HTTP-01. Use a separate VPN hostname when the certificate must be publicly trusted; the one-click path uses the panel hostname with a self-signed endpoint certificate. Certbot stores VPN certificates privately under `/var/lib/ttui/acme`, and `ttui-acme.timer` runs renewal checks and reloads an active endpoint after a validated certificate change.
 
